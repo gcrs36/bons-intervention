@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bon d'Intervention - Dimensions</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f4f7f6; margin: 0; padding: 20px; }
+        .container { max-width: 750px; background: white; padding: 25px; border-radius: 8px; margin: auto; box-shadow: 0px 0px 10px rgba(0,0,0,0.1); }
+        h2 { color: #d9534f; text-align: center; }
+        fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 15px; margin-top: 15px; }
+        legend { font-weight: bold; color: #d9534f; padding: 0 5px; }
+        label { display: block; margin-top: 10px; font-weight: bold; font-size: 13px; }
+        input, textarea, select { width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        .row { display: flex; gap: 10px; }
+        .row > div { flex: 1; }
+        canvas { border: 1px solid #ccc; width: 100%; height: 130px; background: #fff; cursor: crosshair; margin-top: 5px; }
+        button { background: #d9534f; color: white; border: none; padding: 12px; width: 100%; margin-top: 20px; border-radius: 4px; font-size: 16px; cursor: pointer; }
+        button:hover { background: #c9302c; }
+        .links { text-align: center; margin-top: 15px; }
+        .hidden-mail { display: none; margin-top: 10px; }
+        .add-mail-btn { background: #6c757d; color: white; border: none; padding: 6px 10px; margin-top: 8px; border-radius: 4px; font-size: 12px; cursor: pointer; }
+        .add-mail-btn:hover { background: #5a6268; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Dimensions - Bon d'Intervention</h2>
+        
+        <!-- Action pointant vers la route dédiée Dimensions dans le serveur -->
+        <form action="/api/create-intervention-dimensions" method="POST" id="interventionForm">
+            
+            <fieldset>
+                <legend>Informations Générales</legend>
+                <div class="row">
+                    <div>
+                        <label>Date et Heure :</label>
+                        <input type="datetime-local" name="date_et_heure1" id="dateHeureInput" required>
+                    </div>
+                    <div>
+                        <label>Réf. Cde client :</label>
+                        <input type="text" name="ref_cde_client">
+                    </div>
+                </div>
+                <label>Type de Bon :</label>
+                <select name="bon_de" required>
+                    <option value="Dépannage, entretien">Dépannage, entretien</option>
+                    <option value="Installation">Installation</option>
+                    <option value="Garantie">Garantie</option>
+                    <option value="Contrat">Contrat</option>
+                    <option value="Commande">Commande</option>
+                </select>
+            </fieldset>
+
+            <fieldset>
+                <legend>Client</legend>
+                <div class="row">
+                    <div>
+                        <label>Nom du Client :</label>
+                        <input type="text" name="client" required>
+                    </div>
+                    <div>
+                        <label>Téléphone :</label>
+                        <input type="text" name="tel_">
+                    </div>
+                </div>
+                <label>Adresse :</label>
+                <textarea name="adresse" rows="2"></textarea>
+                
+                <!-- Gestion dynamique des e-mails en cascade -->
+                <div style="margin-top: 15px;">
+                    <label>E-mail principal (envoi auto) :</label>
+                    <input type="email" name="mail" id="mail1" placeholder="client@exemple.com">
+                    
+                    <button type="button" id="btnAddMail2" class="add-mail-btn">+ Ajouter un autre e-mail</button>
+
+                    <div id="blockMail2" class="hidden-mail">
+                        <label>E-mail 2 :</label>
+                        <input type="email" name="mail2" id="mail2">
+                        <button type="button" id="btnAddMail3" class="add-mail-btn">+ Ajouter un 3ème e-mail</button>
+                    </div>
+
+                    <div id="blockMail3" class="hidden-mail">
+                        <label>E-mail 3 :</label>
+                        <input type="email" name="mail3" id="mail3">
+                        <button type="button" id="btnAddMail4" class="add-mail-btn">+ Ajouter un 4ème e-mail</button>
+                    </div>
+
+                    <div id="blockMail4" class="hidden-mail">
+                        <label>E-mail 4 :</label>
+                        <input type="email" name="mail4" id="mail4">
+                    </div>
+                </div>
+            </fieldset>
+
+            <fieldset>
+                <legend>Matériel & Intervention</legend>
+                <div class="row">
+                    <div>
+                        <label>Type Matériel :</label>
+                        <input type="text" name="type_materiel_">
+                    </div>
+                    <div>
+                        <label>N° de Matricule :</label>
+                        <input type="text" name="n_de_matricule_">
+                    </div>
+                </div>
+                <label>Travail Effectué :</label>
+                <textarea name="travail_effectue" rows="4" required></textarea>
+            </fieldset>
+
+            <fieldset>
+                <legend>Pièces et Fournitures</legend>
+                <div class="row">
+                    <div style="flex: 1;"><label>Code :</label><input type="text" name="code"></div>
+                    <div style="flex: 2;"><label>Désignation :</label><input type="text" name="champ_de_saisie2"></div>
+                    <div style="flex: 1;"><label>Prix :</label><input type="text" name="champ_de_saisie4"></div>
+                    <div style="flex: 1;"><label>Qté :</label><input type="text" name="champ_de_saisie5"></div>
+                    <div style="flex: 1;"><label>Total H.T. :</label><input type="text" name="total_h_t_"></div>
+                </div>
+            </fieldset>
+
+            <fieldset>
+                <legend>Temps & Déplacement</legend>
+                <div class="row">
+                    <div>
+                        <label>Heure d'arrivée :</label>
+                        <select name="heures_d_arrivee" id="heureArriveeSelect"></select>
+                    </div>
+                    <div>
+                        <label>Heure départ :</label>
+                        <select name="heure_depart" id="heureDepartSelect"></select>
+                    </div>
+                    <div>
+                        <label>Temps passé :</label>
+                        <input type="text" name="temps_passe" placeholder="ex: 02h30">
+                    </div>
+                </div>
+                <div class="row">
+                    <div><label>Repas (Qté) :</label><input type="number" name="repas" value="0"></div>
+                    <div><label>KM :</label><input type="number" name="km" value="0"></div>
+                    <div><label>Hôtel (Qté) :</label><input type="number" name="hotel" value="0"></div>
+                    <div><label>Autoroute :</label><input type="text" name="autoroute" value="0"></div>
+                </div>
+                <label>Déplacement :</label>
+                <input type="text" name="deplacement">
+            </fieldset>
+
+            <fieldset>
+                <legend>Validation & Signatures</legend>
+                <div class="row">
+                    <div>
+                        <label>Nom du Technicien :</label>
+                        <input type="text" name="non_du_technicien" required>
+                    </div>
+                    <div>
+                        <label>Nom du Signataire :</label>
+                        <input type="text" name="nom_du_signataire_" required>
+                    </div>
+                </div>
+                <label style="margin-top:10px;">
+                    <input type="checkbox" name="bon_pour_accord" value="1" checked style="width:auto;"> Bon pour accord & Acceptation des CGV
+                </label>
+                
+                <label style="margin-top:15px;">Signature du client :</label>
+                <canvas id="signatureCanvas"></canvas>
+                <input type="hidden" name="signature" id="signatureInput">
+                <button type="button" id="clearBtn" style="background:#6c757d; margin-top:5px; padding:5px; font-size:12px; width:auto;">Effacer la signature</button>
+            </fieldset>
+
+            <button type="submit">Générer, Enregistrer et Envoyer</button>
+        </form>
+        <div class="links" style="margin-top: 20px;">
+            <a href="/">← Retour au choix des formulaires</a>
+        </div>
+    </div>
+
+    <script>
+        // Gestion de l'affichage en cascade des e-mails
+        document.getElementById('btnAddMail2').addEventListener('click', function() {
+            document.getElementById('blockMail2').style.display = 'block';
+            this.style.display = 'none';
+        });
+        document.getElementById('btnAddMail3').addEventListener('click', function() {
+            document.getElementById('blockMail3').style.display = 'block';
+            this.style.display = 'none';
+        });
+        document.getElementById('btnAddMail4').addEventListener('click', function() {
+            document.getElementById('blockMail4').style.display = 'block';
+            this.style.display = 'none';
+        });
+
+        // Remplissage automatique de la date et l'heure du jour
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        document.getElementById('dateHeureInput').value = `${year}-${month}-${day}T${hours}:${minutes}`;
+
+        // Génération des options d'heures par tranche de 15 minutes (Format 24H)
+        const arriveeSelect = document.getElementById('heureArriveeSelect');
+        const departSelect = document.getElementById('heureDepartSelect');
+        
+        for (let h = 0; h < 24; h++) {
+            for (let m = 0; m < 60; m += 15) {
+                const hh = String(h).padStart(2, '0');
+                const mm = String(m).padStart(2, '0');
+                const timeString = `${hh}:${mm}`;
+                
+                arriveeSelect.add(new Option(timeString, timeString));
+                departSelect.add(new Option(timeString, timeString));
+            }
+        }
+        arriveeSelect.value = `${hours}:${minutes}`;
+
+        // Gestion du pad de signature tactile
+        const canvas = document.getElementById('signatureCanvas');
+        const ctx = canvas.getContext('2d');
+        let painting = false;
+
+        function startPosition(e) { painting = true; draw(e); }
+        function endPosition() { painting = false; ctx.beginPath(); }
+        function draw(e) {
+            if (!painting) return;
+            ctx.lineWidth = 2;
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = '#000';
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX || e.touches[0].clientX) - rect.left;
+            const y = (e.clientY || e.touches[0].clientY) - rect.top;
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+        }
+
+        canvas.addEventListener('mousedown', startPosition);
+        canvas.addEventListener('mouseup', endPosition);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('touchstart', startPosition);
+        canvas.addEventListener('touchend', endPosition);
+        canvas.addEventListener('touchmove', draw);
+
+        document.getElementById('clearBtn').addEventListener('click', () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        });
+
+        document.getElementById('interventionForm').addEventListener('submit', function() {
+            document.getElementById('signatureInput').value = canvas.toDataURL();
+        });
+    </script>
+</body>
+</html>
