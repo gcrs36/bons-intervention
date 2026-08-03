@@ -1,0 +1,10 @@
+{
+  "name": "bon-intervention",
+  "version": "1.0.0",
+  "dependencies": {
+    "express": "^4.18.2",
+    "sqlite3": "^5.1.7",
+    "exceljs": "^4.4.0",
+    "pdfkit": "^0.14.0"
+  }
+}
