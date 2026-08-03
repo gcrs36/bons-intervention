@@ -1,0 +1,17 @@
+{
+  "name": "bon-intervention-app",
+  "version": "1.0.0",
+  "description": "Application de bons d'intervention sur mesure",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "body-parser": "^1.20.2",
+    "docxtemplater": "^3.47.1",
+    "express": "^4.19.2",
+    "nodemailer": "^6.9.13",
+    "pizzip": "^3.1.6",
+    "sqlite3": "^5.1.7"
+  }
+}
