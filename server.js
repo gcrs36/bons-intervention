@@ -365,9 +365,14 @@ async function generatePdf(bon, outputPath) {
     const black = '#000000';
     const left = 54;
     const width = 487.25;
-    const logoPath = path.join(publicDir, 'logo-enquete.png');
+    const logoPath = path.join(publicDir, 'logo-dimensions.png');
     const pt = (inches) => inches * 72;
-    const cleanText = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
+    const cleanText = (value) => String(value ?? '')
+      .replace(/\r\n?/g, '\n')
+      .replace(/[^\S\n]+/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    const singleLine = (value) => cleanText(value).replace(/\n+/g, ' ');
 
     function drawCell(x, y, cellWidth, height, value, options = {}) {
       const padding = options.padding ?? 4;
@@ -394,10 +399,10 @@ async function generatePdf(bon, outputPath) {
 
     function drawHeader() {
       if (fs.existsSync(logoPath)) {
-        try { doc.image(logoPath, left, pt(0.82), { fit: [pt(3.95), pt(0.68)], align: 'left', valign: 'center' }); } catch { /* logo facultatif */ }
+        try { doc.image(logoPath, pt(0.743), pt(0.787), { fit: [pt(3.947), pt(0.986)], align: 'left', valign: 'center' }); } catch { /* logo facultatif */ }
       }
       doc.fillColor(black).font('Helvetica').fontSize(6)
-        .text('Machines et fournitures pour le façonnage et le pelliculage', left, pt(1.55), { width: pt(3.95), align: 'center' });
+        .text('Machines et fournitures pour le façonnage et le pelliculage', pt(0.743), pt(1.82), { width: pt(3.947), align: 'center' });
       doc.fontSize(8).text([
         'Parc d’Activités Les Portes du Dauphiné',
         'Rue Ampère - 69780 SAINT PIERRE DE CHANDIEU',
@@ -439,15 +444,24 @@ async function generatePdf(bon, outputPath) {
     const clientY = pt(2.331);
     const half = width / 2;
     drawRows(left, clientY, [half, half], [
-      { height: 21.85, cells: [{ value: `Date: ${formatDateTime(bon.date_et_heure1)}` }, { value: `Client : ${bon.client || ''}` }] },
-      { height: 21.85, cells: [{ value: `Réf. Cde client : ${bon.ref_cde_client || ''}` }, { value: `Adresse : ${bon.adresse || ''}` }] },
-      { height: 21.85, cells: [{ value: `Tél : ${bon.tel_ || ''}` }, { value: `@ Mail: ${bon.mail || ''}` }] },
+      { height: 14.75, cells: [
+        { value: `Date: ${formatDateTime(bon.date_et_heure1)}`, options: { padding: 2 } },
+        { value: `Client : ${bon.client || ''}`, options: { padding: 2 } },
+      ] },
+      { height: 14.75, cells: [
+        { value: `Réf. Cde client : ${bon.ref_cde_client || ''}`, options: { padding: 2 } },
+        { value: `Adresse : ${singleLine(bon.adresse)}`, options: { padding: 2 } },
+      ] },
+      { height: 14.75, cells: [
+        { value: `Tél : ${bon.tel_ || ''}`, options: { padding: 2 } },
+        { value: `@ Mail: ${bon.mail || ''}`, options: { padding: 2 } },
+      ] },
     ]);
 
     const bonY = pt(3.127);
     drawRows(left, bonY, [width], [
-      { height: 23.2, cells: [{ value: 'BON DE :', options: { bold: true, align: 'center', size: 8 } }] },
-      { height: 23.2, cells: [{ value: bon.bon_de || '', options: { align: 'center', size: 8 } }] },
+      { height: 14.75, cells: [{ value: 'BON DE :', options: { bold: true, align: 'center', size: 8, padding: 2 } }] },
+      { height: 14.75, cells: [{ value: bon.bon_de || '', options: { align: 'center', size: 8, padding: 2 } }] },
     ]);
 
     const workY = pt(3.848);
@@ -473,20 +487,23 @@ async function generatePdf(bon, outputPath) {
     ]);
 
     const signatureY = pt(9.57);
-    drawCell(left, signatureY, half, 21.25, `Nom du technicien: ${bon.non_du_technicien || ''}`, { size: 9 });
-    drawCell(left + half, signatureY, half, 21.25, `Nom du signataire: ${bon.nom_du_signataire_ || ''}`, { size: 9 });
-    const signatureHeight = 43;
-    drawCell(left, signatureY + 21.25, width, signatureHeight, 'Bon pour accord', { align: 'center', size: 9, padding: 4 });
+    const signatureNameHeight = 19;
+    const signatureHeight = pt(0.59) - signatureNameHeight;
+    drawCell(left, signatureY, half, signatureNameHeight, `Nom du technicien: ${bon.non_du_technicien || ''}`, { size: 9, padding: 3 });
+    drawCell(left + half, signatureY, half, signatureNameHeight, `Nom du signataire: ${bon.nom_du_signataire_ || ''}`, { size: 9, padding: 3 });
+    drawCell(left, signatureY + signatureNameHeight, width, signatureHeight, 'Bon pour accord', { align: 'center', size: 9, padding: 2 });
     if (bon.signature) {
       try {
         const signatureBuffer = Buffer.from(String(bon.signature).split(',')[1], 'base64');
-        doc.image(signatureBuffer, left + 8, signatureY + 33, { fit: [width - 16, 28], align: 'center', valign: 'center' });
+        doc.image(signatureBuffer, left + 8, signatureY + signatureNameHeight + 10, {
+          fit: [width - 16, Math.max(signatureHeight - 12, 6)], align: 'center', valign: 'center',
+        });
       } catch { /* La présence du libellé conserve la zone si l'image est illisible. */ }
     }
 
-    const legalY = pt(10.62);
+    const legalY = pt(10.559);
     doc.save().lineWidth(0.25).strokeColor(black).rect(left, legalY, width, 26).stroke().restore();
-    doc.fillColor(black).font('Helvetica').fontSize(5.5).text(
+    doc.fillColor(black).font('Helvetica').fontSize(6).text(
       'Je déclare avoir pris connaissance et rester en possession d’un exemplaire des conditions générales de ventes au verso du présent document et les accepte dans leur intégralité.\nLa clause de réserve de propriété des marchandises vendues n’interviendra qu’après parfait paiement du prix convenu (Loi N° 80-335 du 12 mai 1980).',
       left + 4, legalY + 3, { width: width - 8, height: 20, lineGap: 0.3, align: 'left', ellipsis: true },
     );
