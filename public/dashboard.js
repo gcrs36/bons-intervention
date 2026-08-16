@@ -1,0 +1,56 @@
+const formatDate = (value) => {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Date inconnue' : new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium' }).format(date);
+};
+
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+
+function syncBadge(state) {
+  const states = {
+    synced: ['Synchronisé', 'badge-success'], syncing: ['En cours', 'badge-warning'],
+    pending: ['À synchroniser', 'badge-warning'], error: ['Erreur', 'badge-error'],
+    not_configured: ['Local', 'badge-muted'],
+  };
+  const [label, css] = states[state] || ['En attente', 'badge-muted'];
+  return `<span class="badge ${css}">${label}</span>`;
+}
+
+async function loadDashboard() {
+  try {
+    const response = await fetch('/api/dashboard');
+    if (!response.ok) throw new Error('Tableau de bord indisponible');
+    const data = await response.json();
+    document.querySelector('#statToday').textContent = data.totals.today || 0;
+    document.querySelector('#statSigned').textContent = data.totals.signed || 0;
+    document.querySelector('#statSynced').textContent = data.totals.synced || 0;
+    document.querySelector('#statTotal').textContent = data.totals.total || 0;
+    const rows = document.querySelector('#recentRows');
+    rows.innerHTML = data.recent.length ? data.recent.map((bon) => `<tr>
+      <td><div class="ref">${escapeHtml(bon.public_ref)}</div><div class="sub">${formatDate(bon.date_et_heure1)}</div></td>
+      <td><strong>${escapeHtml(bon.client || 'Non renseigné')}</strong></td>
+      <td>${escapeHtml(bon.bon_de || '—')}</td>
+      <td>${syncBadge(bon.sync_state)}</td>
+      <td><a class="btn btn-secondary btn-small" href="/api/bons/${bon.id}/pdf" target="_blank" rel="noopener">PDF</a></td>
+    </tr>`).join('') : '<tr><td colspan="5" class="empty">Aucune intervention pour le moment.</td></tr>';
+    updateConnection(data.dolibarrConfigured);
+  } catch (error) {
+    document.querySelector('#recentRows').innerHTML = `<tr><td colspan="5" class="empty">${escapeHtml(error.message)}</td></tr>`;
+  }
+}
+
+function updateConnection(configured) {
+  const state = document.querySelector('#doliState');
+  const message = document.querySelector('#doliMessage');
+  const topBadge = document.querySelector('#connectionBadge');
+  if (configured) {
+    state.className = 'badge badge-success'; state.textContent = 'Configuré';
+    topBadge.className = 'badge badge-success'; topBadge.textContent = 'Dolibarr configuré';
+    message.textContent = 'La clé API serveur est présente. La connexion sera testée à la première synchronisation.';
+  } else {
+    state.className = 'badge badge-warning'; state.textContent = 'À activer';
+    topBadge.className = 'badge badge-warning'; topBadge.textContent = 'Dolibarr à configurer';
+    message.textContent = 'Activez le module API REST puis ajoutez la clé dans les variables Render.';
+  }
+}
+
+loadDashboard();

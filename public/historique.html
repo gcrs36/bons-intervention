@@ -1,66 +1,49 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Historique des Bons d'Intervention</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f9; }
-        .container { max-width: 800px; margin: auto; }
-        h1 { color: #333; font-size: 22px; }
-        .bon-card { background: white; padding: 15px; margin-bottom: 12px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; }
-        .btn-retour { display: inline-block; margin-bottom: 20px; padding: 10px 15px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; }
-        .btn-excel { display: inline-block; margin-bottom: 20px; margin-left: 10px; padding: 10px 15px; background: #28a745; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; }
-        .btn-pdf { background: #d9534f; color: white; padding: 6px 12px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; }
-        .btn-retour:hover { background-color: #0056b3; }
-        .btn-excel:hover { background-color: #218838; }
-        .btn-pdf:hover { background-color: #c9302c; }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#173b57">
+  <title>Interventions · GCRS</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/history.js" defer></script>
 </head>
 <body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/"><span class="brand-mark">GI</span><span><span class="brand-name">GCRS Interventions</span><span class="brand-subtitle">Pilotage terrain</span></span></a>
+      <nav class="nav" aria-label="Navigation principale">
+        <a href="/"><span class="nav-icon">⌂</span><span>Tableau de bord</span></a>
+        <a href="/form-dimensions.html"><span class="nav-icon">＋</span><span>Nouveau bon</span></a>
+        <a class="active" href="/historique.html"><span class="nav-icon">▤</span><span>Interventions</span></a>
+      </nav>
+      <div class="sidebar-foot">Application métier · v2.0</div>
+    </aside>
 
-    <div class="container">
-        <div>
-            <a href="/form-dimensions.html" class="btn-retour">← Retour au formulaire</a>
-            <a href="/api/export-excel" class="btn-excel">📊 Télécharger l'Excel complet</a>
+    <main class="main">
+      <header class="topbar"><div class="topbar-title">Registre des interventions</div></header>
+      <div class="content">
+        <div class="page-head">
+          <div><p class="eyebrow">Historique</p><h1>Toutes les interventions</h1><p class="lead">Retrouvez les bons, les PDF signés et leur état de synchronisation.</p></div>
+          <div class="topbar-actions"><a class="btn btn-secondary" href="/api/export-excel">↓ Export Excel</a><a class="btn btn-primary" href="/form-dimensions.html">＋ Nouveau bon</a></div>
         </div>
-        
-        <h1>Historique des interventions</h1>
 
-        <div id="liste-bons">Chargement de l'historique...</div>
-    </div>
-
-    <script>
-        fetch('/api/bons')
-            .then(response => response.json())
-            .then(data => {
-                const container = document.getElementById('liste-bons');
-                if (!data.bons || data.bons.length === 0) {
-                    container.innerHTML = "<p>Aucun bon d'intervention enregistré pour le moment.</p>";
-                    return;
-                }
-
-                let html = '';
-                data.bons.forEach(bon => {
-                    html += `
-                        <div class="bon-card">
-                            <div>
-                                <p><strong>ID :</strong> ${bon.id} | <strong>Date :</strong> ${bon.date_et_heure1 || 'N/A'}</p>
-                                <p><strong>Client :</strong> ${bon.client || 'Non renseigné'} - <strong>Type :</strong> ${bon.bon_de || 'N/A'}</p>
-                                <p><strong>Technicien :</strong> ${bon.non_du_technicien || 'N/A'}</p>
-                            </div>
-                            <div>
-                                ${bon.pdf_url ? `<a href="${bon.pdf_url}" target="_blank" class="btn-pdf">📄 Voir PDF</a>` : '<span>Pas de PDF</span>'}
-                            </div>
-                        </div>
-                    `;
-                });
-                container.innerHTML = html;
-            })
-            .catch(error => {
-                document.getElementById('liste-bons').innerHTML = "<p style='color:red;'>Erreur lors du chargement de l'historique.</p>";
-            });
-    </script>
-
+        <section class="panel">
+          <form class="filters" id="filters">
+            <div class="field"><label for="search">Recherche</label><input id="search" name="q" type="search" placeholder="Client, référence, technicien…"></div>
+            <div class="field"><label for="syncFilter">Synchronisation</label><select id="syncFilter" name="sync"><option value="">Tous les états</option><option value="synced">Synchronisés</option><option value="pending">À synchroniser</option><option value="error">En erreur</option><option value="not_configured">Locaux</option></select></div>
+            <button class="btn btn-secondary" type="submit" style="align-self:end">Filtrer</button>
+          </form>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Bon</th><th>Client</th><th>Intervention</th><th>Technicien</th><th>Dolibarr</th><th>Documents</th></tr></thead>
+              <tbody id="historyRows"><tr><td colspan="6" class="empty">Chargement de l’historique…</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
 </body>
 </html>

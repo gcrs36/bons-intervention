@@ -1,32 +1,79 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Portail des Bons d'Intervention</title>
-    <style>
-        body { font-family: Arial, sans-serif; background: #f4f7f6; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; height: 100vh; }
-        .container { max-width: 450px; width: 100%; background: white; padding: 30px; border-radius: 8px; box-shadow: 0px 0px 10px rgba(0,0,0,0.1); text-align: center; }
-        h2 { color: #d9534f; margin-bottom: 25px; }
-        .btn-choice { display: block; background: #d9534f; color: white; text-decoration: none; padding: 15px; margin: 15px 0; border-radius: 6px; font-size: 16px; font-weight: bold; transition: background 0.2s; }
-        .btn-choice:hover { background: #c9302c; }
-        .btn-historique { background: #6c757d; }
-        .btn-historique:hover { background: #5a6268; }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#173b57">
+  <title>Tableau de bord · GCRS Interventions</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/dashboard.js" defer></script>
 </head>
 <body>
-    <div class="container">
-        <h2>Sélectionnez le type de bon</h2>
-        
-        <!-- Lien vers le formulaire Dimensions -->
-        <a href="/form-dimensions.html" class="btn-choice">Bon d'intervention - Dimensions</a>
-        
-        <!-- Lien vers un autre formulaire (ex: GCRS) -->
-        <a href="/form-gcrs.html" class="btn-choice">Bon d'intervention - GCRS</a>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="GCRS Interventions">
+        <span class="brand-mark">GI</span>
+        <span><span class="brand-name">GCRS Interventions</span><span class="brand-subtitle">Pilotage terrain</span></span>
+      </a>
+      <nav class="nav" aria-label="Navigation principale">
+        <a class="active" href="/"><span class="nav-icon">⌂</span><span>Tableau de bord</span></a>
+        <a href="/form-dimensions.html"><span class="nav-icon">＋</span><span>Nouveau bon</span></a>
+        <a href="/historique.html"><span class="nav-icon">▤</span><span>Interventions</span></a>
+      </nav>
+      <div class="sidebar-foot">Application métier · v2.0</div>
+    </aside>
 
-        <div style="margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px;">
-            <a href="/historique.html" class="btn-choice btn-historique">Voir l'historique des interventions</a>
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-title">Vue d’ensemble</div>
+        <div class="topbar-actions"><span id="connectionBadge" class="badge badge-muted">Dolibarr</span></div>
+      </header>
+
+      <div class="content">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">Activité terrain</p>
+            <h1>Bonjour, voici vos interventions.</h1>
+            <p class="lead">Suivez les bons signés et leur transfert vers Dolibarr depuis un espace unique.</p>
+          </div>
+          <a class="btn btn-primary" href="/form-dimensions.html">＋ Créer un bon</a>
         </div>
-    </div>
+
+        <section class="stats" aria-label="Indicateurs">
+          <article class="stat"><div class="stat-top"><span>Aujourd’hui</span><span class="stat-icon">◷</span></div><strong id="statToday">—</strong><small>interventions datées du jour</small></article>
+          <article class="stat"><div class="stat-top"><span>Bons signés</span><span class="stat-icon">✓</span></div><strong id="statSigned">—</strong><small>documents finalisés</small></article>
+          <article class="stat"><div class="stat-top"><span>Synchronisés</span><span class="stat-icon">↗</span></div><strong id="statSynced">—</strong><small>transférés vers Dolibarr</small></article>
+          <article class="stat"><div class="stat-top"><span>Total</span><span class="stat-icon">▤</span></div><strong id="statTotal">—</strong><small>bons enregistrés</small></article>
+        </section>
+
+        <div class="grid-2">
+          <section class="panel">
+            <div class="panel-head"><h2>Interventions récentes</h2><a class="btn btn-secondary btn-small" href="/historique.html">Tout afficher</a></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Référence</th><th>Client</th><th>Type</th><th>Dolibarr</th><th></th></tr></thead>
+                <tbody id="recentRows"><tr><td colspan="5" class="empty">Chargement…</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+
+          <aside class="panel">
+            <div class="panel-head"><h2>Connexion Dolibarr</h2></div>
+            <div class="panel-body">
+              <div class="connection">
+                <div class="connection-line"><h3>dolibarr.gcrs.fr</h3><span id="doliState" class="badge badge-muted">Vérification</span></div>
+                <p id="doliMessage">Contrôle de la configuration serveur…</p>
+              </div>
+              <div class="flow" aria-label="Flux de synchronisation">
+                <div class="flow-step"><span class="step-number">1</span><span>Fiche d’intervention</span></div>
+                <div class="flow-step"><span class="step-number">2</span><span>Commande si des pièces sont saisies</span></div>
+                <div class="flow-step"><span class="step-number">3</span><span>Facture conservée en brouillon</span></div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </main>
+  </div>
 </body>
 </html>
