@@ -4,6 +4,7 @@ const formatDate = (value) => {
 };
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+const typeLabels = { intervention: 'Intervention', visite_massicot: 'Visite massicot', mise_en_service: 'Mise en service', fiche_machine: 'Fiche machine' };
 
 function syncBadge(state) {
   const states = {
@@ -28,7 +29,7 @@ async function loadDashboard() {
     rows.innerHTML = data.recent.length ? data.recent.map((bon) => `<tr>
       <td><div class="ref">${escapeHtml(bon.public_ref)}</div><div class="sub">${formatDate(bon.date_et_heure1)}</div></td>
       <td><strong>${escapeHtml(bon.client || 'Non renseigné')}</strong></td>
-      <td>${escapeHtml(bon.bon_de || '—')}</td>
+      <td>${escapeHtml(typeLabels[bon.bon_type] || bon.bon_de || 'Intervention')}<div class="sub">${escapeHtml((bon.bon_variant || '').toUpperCase())}</div></td>
       <td>${syncBadge(bon.sync_state)}</td>
       <td><a class="btn btn-secondary btn-small" href="/api/bons/${bon.id}/pdf" target="_blank" rel="noopener">PDF</a></td>
     </tr>`).join('') : '<tr><td colspan="5" class="empty">Aucune intervention pour le moment.</td></tr>';

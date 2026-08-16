@@ -2,6 +2,7 @@ const rows = document.querySelector('#historyRows');
 const filters = document.querySelector('#filters');
 const toast = document.querySelector('#toast');
 let dolibarrConfigured = false;
+const typeLabels = { intervention: 'Intervention', visite_massicot: 'Visite massicot', mise_en_service: 'Mise en service', fiche_machine: 'Fiche machine' };
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
 const dateTime = (value) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? 'Date inconnue' : new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }).format(date); };
@@ -33,7 +34,7 @@ function renderRow(bon) {
   return `<tr>
     <td><div class="ref">${escapeHtml(bon.public_ref || `BI-${bon.id}`)}</div><div class="sub">${dateTime(bon.date_et_heure1)}</div></td>
     <td><strong>${escapeHtml(bon.client || 'Non renseigné')}</strong><div class="sub">${escapeHtml(bon.ref_cde_client || 'Sans référence client')}</div></td>
-    <td>${escapeHtml(bon.bon_de || '—')}<div class="sub">${escapeHtml(bon.type_materiel_ || 'Matériel non renseigné')}</div></td>
+    <td>${escapeHtml(typeLabels[bon.bon_type] || bon.bon_de || 'Intervention')}<div class="sub">${escapeHtml([(bon.bon_variant || '').toUpperCase(), bon.type_materiel_ || 'Matériel non renseigné'].filter(Boolean).join(' · '))}</div></td>
     <td>${escapeHtml(bon.non_du_technicien || '—')}</td>
     <td>${syncBadge(bon.sync_state)}<div class="sub">${escapeHtml(syncDetails)}</div></td>
     <td><div class="topbar-actions"><a class="btn btn-secondary btn-small" href="/api/bons/${bon.id}/pdf" target="_blank" rel="noopener">PDF</a>${canSync ? `<button class="btn btn-ghost btn-small sync-btn" type="button" data-id="${bon.id}">Synchroniser</button>` : ''}</div></td>
