@@ -33,7 +33,7 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'same-origin');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
   next();
 });
 
@@ -149,21 +149,22 @@ app.post('/api/create-intervention-dimensions', async (req, res) => {
   try {
     const payload = normalizeBonPayload(req.body);
     validateBonPayload(payload);
+    if (await respondWithExistingRequest(req, res, payload.client_request_id)) return;
 
     const result = await dbRun(`INSERT INTO bons (
       date_et_heure1, ref_cde_client, bon_de, client, tel_, adresse, mail,
       type_materiel_, n_de_matricule_, travail_effectue, temps_passe,
       non_du_technicien, nom_du_signataire_, status, sync_state,
       heures_d_arrivee, heure_depart, repas, km, hotel, autoroute, deplacement,
-      dolibarr_thirdparty_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'signed', ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`, [
+      dolibarr_thirdparty_id, client_request_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'signed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`, [
       payload.date_et_heure1, payload.ref_cde_client, payload.bon_de, payload.client,
       payload.tel_, payload.adresse, payload.mail, payload.type_materiel_,
       payload.n_de_matricule_, payload.travail_effectue, payload.temps_passe,
       payload.non_du_technicien, payload.nom_du_signataire_,
       dolibarr.isConfigured() ? 'pending' : 'not_configured', payload.heures_d_arrivee,
       payload.heure_depart, payload.repas, payload.km, payload.hotel, payload.autoroute,
-      payload.deplacement, payload.dolibarr_thirdparty_id,
+      payload.deplacement, payload.dolibarr_thirdparty_id, payload.client_request_id,
     ]);
 
     const id = result.lastID;
@@ -214,14 +215,15 @@ app.post('/api/create-bon', async (req, res) => {
   try {
     const payload = normalizeGenericPayload(req.body);
     validateGenericPayload(payload);
+    if (await respondWithExistingRequest(req, res, payload.client_request_id)) return;
 
     const result = await dbRun(`INSERT INTO bons (
       date_et_heure1, ref_cde_client, bon_de, client, tel_, adresse, mail,
       type_materiel_, n_de_matricule_, travail_effectue, temps_passe,
       non_du_technicien, nom_du_signataire_, status, sync_state,
       heures_d_arrivee, heure_depart, repas, km, hotel, autoroute, deplacement,
-      dolibarr_thirdparty_id, bon_type, bon_variant, extra_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'signed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`, [
+      dolibarr_thirdparty_id, bon_type, bon_variant, extra_json, client_request_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'signed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`, [
       payload.date_et_heure1, payload.ref_cde_client, payload.bon_de, payload.client,
       payload.tel_, payload.adresse, payload.mail, payload.type_materiel_,
       payload.n_de_matricule_, payload.travail_effectue, payload.temps_passe,
@@ -229,7 +231,7 @@ app.post('/api/create-bon', async (req, res) => {
       dolibarr.isConfigured() ? 'pending' : 'not_configured', payload.heures_d_arrivee,
       payload.heure_depart, payload.repas, payload.km, payload.hotel, payload.autoroute,
       payload.deplacement, payload.dolibarr_thirdparty_id, payload.bon_type,
-      payload.bon_variant, JSON.stringify(payload.extra),
+      payload.bon_variant, JSON.stringify(payload.extra), payload.client_request_id,
     ]);
 
     const id = result.lastID;
@@ -386,8 +388,9 @@ async function initializeDatabase() {
     autoroute: 'REAL NOT NULL DEFAULT 0', deplacement: 'TEXT', dolibarr_thirdparty_id: 'INTEGER',
     dolibarr_intervention_id: 'INTEGER', dolibarr_order_id: 'INTEGER', dolibarr_invoice_id: 'INTEGER',
     dolibarr_pdf_uploaded: 'INTEGER NOT NULL DEFAULT 0', bon_type: "TEXT NOT NULL DEFAULT 'intervention'",
-    bon_variant: "TEXT NOT NULL DEFAULT 'dimensions'", extra_json: 'TEXT', created_at: 'TEXT', updated_at: 'TEXT',
+    bon_variant: "TEXT NOT NULL DEFAULT 'dimensions'", extra_json: 'TEXT', client_request_id: 'TEXT', created_at: 'TEXT', updated_at: 'TEXT',
   });
+  await dbExec('CREATE UNIQUE INDEX IF NOT EXISTS idx_bons_client_request_id ON bons(client_request_id) WHERE client_request_id IS NOT NULL');
   await dbRun(`UPDATE bons SET public_ref = printf('BI-%05d', id) WHERE public_ref IS NULL OR public_ref = ''`);
   await dbRun(`UPDATE bons SET created_at = COALESCE(created_at, datetime('now')), updated_at = COALESCE(updated_at, datetime('now'))`);
 }
@@ -682,7 +685,9 @@ function normalizeBonPayload(body) {
     bon_pour_accord: String(body.bon_pour_accord || '') === '1', heures_d_arrivee: clean(body.heures_d_arrivee, 8),
     heure_depart: clean(body.heure_depart, 8), repas: toNumber(body.repas), km: toNumber(body.km),
     hotel: toNumber(body.hotel), autoroute: toNumber(body.autoroute), deplacement: clean(body.deplacement, 500),
-    dolibarr_thirdparty_id: Number(body.dolibarr_thirdparty_id) || null, items,
+    dolibarr_thirdparty_id: Number(body.dolibarr_thirdparty_id) || null,
+    client_request_id: clean(body.client_request_id, 100) || null,
+    items,
   };
 }
 
@@ -835,6 +840,24 @@ async function ensureColumns(table, columns) {
 
 function logSync(bonId, step, level, message) {
   return dbRun('INSERT INTO sync_events (bon_id, step, level, message) VALUES (?, ?, ?, ?)', [bonId, step, level, String(message).slice(0, 2000)]);
+}
+
+async function respondWithExistingRequest(req, res, clientRequestId) {
+  if (!clientRequestId) return false;
+  const existing = await dbGet('SELECT id, public_ref, sync_state FROM bons WHERE client_request_id = ?', [clientRequestId]);
+  if (!existing) return false;
+  if (wantsJson(req)) {
+    res.status(200).json({
+      ok: true,
+      id: existing.id,
+      publicRef: existing.public_ref,
+      duplicate: true,
+      sync: existing.sync_state === 'synced' ? { ok: true, alreadySynced: true } : null,
+    });
+  } else {
+    res.redirect(`/historique.html?created=${existing.id}`);
+  }
+  return true;
 }
 
 function wantsJson(req) { return req.is('application/json') || String(req.headers.accept || '').includes('application/json'); }

@@ -1,6 +1,20 @@
 # GCRS Interventions
 
-Application web mobile de gestion des bons d’intervention, avec signature, PDF, export Excel et synchronisation serveur vers Dolibarr 23.
+Application web mobile installable de gestion des bons d’intervention, avec signature, mode hors ligne, PDF, export Excel et synchronisation serveur vers Dolibarr 23.
+
+## Application installable et mode hors ligne
+
+La version 4 est une Progressive Web App (PWA) : elle s’installe depuis le navigateur sur Android, Windows, macOS et iOS, puis s’ouvre dans sa propre fenêtre.
+
+- les écrans principaux et les modèles sont conservés sur l’appareil ;
+- un bon finalisé sans Internet est placé dans une file d’attente locale avec ses signatures et ses photos ;
+- l’historique distingue clairement les bons hors ligne ;
+- au retour de la connexion, les bons sont envoyés au serveur, le PDF est généré et le flux Dolibarr est lancé ;
+- un identifiant unique empêche de créer un doublon si la réponse réseau est interrompue après l’enregistrement.
+
+Le premier chargement et l’installation doivent être réalisés avec Internet. Tant qu’un bon est indiqué « Hors ligne », ne pas effacer les données du navigateur ni désinstaller l’application : ce bon n’existe encore que sur cet appareil.
+
+La procédure utilisateur détaillée se trouve dans `GUIDE-PWA-HORS-LIGNE.md`.
 
 ## Flux Dolibarr retenu
 
