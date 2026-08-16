@@ -373,7 +373,6 @@ async function generatePdf(bon, outputPath) {
       .replace(/[^\S\n]+/g, ' ')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
-    const singleLine = (value) => cleanText(value).replace(/\n+/g, ' ');
 
     function drawCell(x, y, cellWidth, height, value, options = {}) {
       const padding = options.padding ?? 4;
@@ -385,17 +384,31 @@ async function generatePdf(bon, outputPath) {
         });
     }
 
-    function drawRows(x, y, columnWidths, rows) {
-      let cursorY = y;
-      for (const row of rows) {
-        let cursorX = x;
-        row.cells.forEach((cell, index) => {
-          drawCell(cursorX, cursorY, columnWidths[index], row.height, cell.value, cell.options);
-          cursorX += columnWidths[index];
-        });
-        cursorY += row.height;
-      }
-      return cursorY;
+    function measureCellHeight(cellWidth, value, options = {}, minimumHeight = 0) {
+      const padding = options.padding ?? 4;
+      doc.font(options.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(options.size || 8);
+      const textHeight = doc.heightOfString(cleanText(value), {
+        width: Math.max(cellWidth - (padding * 2), 1),
+        align: options.align || 'left', lineGap: 0,
+      });
+      return Math.max(minimumHeight, Math.ceil(textHeight + (padding * 2)));
+    }
+
+    function adaptiveRowHeight(columnWidths, cells, minimumHeight = 0) {
+      return cells.reduce((height, cell, index) => Math.max(
+        height,
+        measureCellHeight(columnWidths[index], cell.value, cell.options, minimumHeight),
+      ), minimumHeight);
+    }
+
+    function drawAdaptiveRow(x, y, columnWidths, cells, minimumHeight = 0) {
+      const height = adaptiveRowHeight(columnWidths, cells, minimumHeight);
+      let cursorX = x;
+      cells.forEach((cell, index) => {
+        drawCell(cursorX, y, columnWidths[index], height, cell.value, cell.options);
+        cursorX += columnWidths[index];
+      });
+      return { height, bottom: y + height };
     }
 
     function drawHeader() {
@@ -413,104 +426,133 @@ async function generatePdf(bon, outputPath) {
       ].join('\n'), pt(4.69), pt(0.83), { width: pt(2.82), height: pt(0.9), align: 'center', lineGap: 0.5 });
     }
 
-    function drawPiecesTable(items, startY, availableHeight = 59.2) {
+    function drawPiecesTable(items, startY) {
       const columns = [61.1, 260.1, 40.4, 47.8, 77.85];
       const labels = ['CODE', 'DÉSIGNATION', 'PRIX', 'QTÉ', 'TOTAL H.T.'];
-      let x = left;
-      labels.forEach((label, index) => {
-        drawCell(x, startY, columns[index], 14.75, label, { bold: true, align: 'center', size: 8, padding: 2 });
-        x += columns[index];
-      });
+      const header = drawAdaptiveRow(left, startY, columns, labels.map((label) => ({
+        value: label, options: { bold: true, align: 'center', size: 8, padding: 2 },
+      })), 14.75);
       const visible = items.slice(0, 2);
       const rowCount = Math.max(visible.length, 2);
-      const rowHeight = availableHeight / rowCount;
+      let cursorY = header.bottom;
       for (let row = 0; row < rowCount; row += 1) {
         const item = visible[row] || {};
         const values = item.designation || item.code ? [
           item.code || '', item.designation || '', money(item.unit_price), number(item.quantity), money(item.line_total),
         ] : ['', '', '', '', ''];
-        x = left;
-        values.forEach((value, index) => {
-          drawCell(x, startY + 14.75 + (row * rowHeight), columns[index], rowHeight, value, {
-            align: index >= 2 ? 'right' : 'left', size: 8, padding: 4,
-          });
-          x += columns[index];
-        });
+        const result = drawAdaptiveRow(left, cursorY, columns, values.map((value, index) => ({
+          value, options: { align: index >= 2 ? 'right' : 'left', size: 8, padding: 4 },
+        })), row === 0 ? 44.45 : 14.75);
+        cursorY = result.bottom;
       }
-      return startY + 14.75 + availableHeight;
+      return cursorY;
     }
 
     drawHeader();
 
     const clientY = pt(2.331);
     const half = width / 2;
-    drawRows(left, clientY, [half, half], [
-      { height: 14.75, cells: [
+    const clientRows = [
+      [
         { value: `Date: ${formatDateTime(bon.date_et_heure1)}`, options: { padding: 2 } },
         { value: `Client : ${bon.client || ''}`, options: { padding: 2 } },
-      ] },
-      { height: 14.75, cells: [
+      ],
+      [
         { value: `Réf. Cde client : ${bon.ref_cde_client || ''}`, options: { padding: 2 } },
-        { value: `Adresse : ${singleLine(bon.adresse)}`, options: { padding: 2 } },
-      ] },
-      { height: 14.75, cells: [
+        { value: `Adresse : ${bon.adresse || ''}`, options: { padding: 2 } },
+      ],
+      [
         { value: `Tél : ${bon.tel_ || ''}`, options: { padding: 2 } },
         { value: `@ Mail: ${bon.mail || ''}`, options: { padding: 2 } },
-      ] },
-    ]);
+      ],
+    ];
+    let clientBottom = clientY;
+    clientRows.forEach((cells) => { clientBottom = drawAdaptiveRow(left, clientBottom, [half, half], cells, 14.75).bottom; });
 
-    const bonY = pt(3.127);
-    drawRows(left, bonY, [width], [
-      { height: 14.75, cells: [{ value: 'BON DE :', options: { bold: true, align: 'center', size: 8, padding: 2 } }] },
-      { height: 14.75, cells: [{ value: bon.bon_de || '', options: { align: 'center', size: 8, padding: 2 } }] },
-    ]);
+    const bonY = Math.max(pt(3.127), clientBottom + 13);
+    const bonTitle = drawAdaptiveRow(left, bonY, [width], [
+      { value: 'BON DE :', options: { bold: true, align: 'center', size: 8, padding: 2 } },
+    ], 14.75);
+    const bonValue = drawAdaptiveRow(left, bonTitle.bottom, [width], [
+      { value: bon.bon_de || '', options: { align: 'center', size: 8, padding: 2 } },
+    ], 14.75);
 
-    const workY = pt(3.848);
+    const workY = Math.max(pt(3.848), bonValue.bottom + 22);
     const typeWidth = width * (6409 / 10458);
-    drawCell(left, workY, typeWidth, 22.7, `TYPE MATÉRIEL: ${bon.type_materiel_ || ''}`, { size: 8 });
-    drawCell(left + typeWidth, workY, width - typeWidth, 22.7, `N° matricule: ${bon.n_de_matricule_ || ''}`, { size: 8 });
-    drawCell(left, workY + 22.7, width, 28, `TRAVAIL EFFECTUÉ: ${bon.travail_effectue || ''}`, { size: 8 });
+    const materialRow = drawAdaptiveRow(left, workY, [typeWidth, width - typeWidth], [
+      { value: `TYPE MATÉRIEL: ${bon.type_materiel_ || ''}`, options: { size: 8 } },
+      { value: `N° matricule: ${bon.n_de_matricule_ || ''}`, options: { size: 8 } },
+    ], 22.7);
+    const workText = `TRAVAIL EFFECTUÉ: ${bon.travail_effectue || ''}`;
+    const maximumWorkHeight = Math.max(28, pt(7.2) - materialRow.bottom);
+    const workHeight = Math.min(measureCellHeight(width, workText, { size: 8 }, 28), maximumWorkHeight);
+    const workBottom = materialRow.bottom + workHeight;
+    drawCell(left, materialRow.bottom, width, workHeight, workText, { size: 8 });
 
+    const piecesLabelY = Math.max(pt(5.62), workBottom + 18);
     doc.fillColor(black).font('Helvetica-Bold').fontSize(8)
-      .text('PIÈCES ET FOURNITURES :', left, pt(5.62), { width });
+      .text('PIÈCES ET FOURNITURES :', left, piecesLabelY, { width });
     const items = Array.isArray(bon.items) ? bon.items : [];
-    const expensesY = drawPiecesTable(items, pt(5.846));
+    const expensesY = drawPiecesTable(items, piecesLabelY + pt(0.226));
     const expenseColumns = [126.1, 95.3, 125.1, 140.75];
-    drawRows(left, expensesY, expenseColumns, [
-      { height: 22.1, cells: [
+    const expenseRows = [
+      { minimumHeight: 22.1, cells: [
         { value: `REPAS: ${number(bon.repas)}` }, { value: `KM: ${number(bon.km)}` },
         { value: `Heure d’arrivée: ${bon.heures_d_arrivee || ''}` }, { value: `TEMPS PASSÉ ${bon.temps_passe || ''}` },
       ] },
-      { height: 21.75, cells: [
+      { minimumHeight: 21.75, cells: [
         { value: `HÔTEL: ${number(bon.hotel)}` }, { value: `Autoroute: ${money(bon.autoroute)}` },
         { value: `Heure départ: ${bon.heure_depart || ''}` }, { value: `DÉPLACEMENT ${bon.deplacement || ''}` },
       ] },
-    ]);
+    ];
+    let expenseBottom = expensesY;
+    expenseRows.forEach((row) => {
+      expenseBottom = drawAdaptiveRow(left, expenseBottom, expenseColumns, row.cells, row.minimumHeight).bottom;
+    });
 
-    const signatureY = pt(7.75);
-    const signatureNameHeight = 19;
-    drawCell(left, signatureY, half, signatureNameHeight, `Nom du technicien: ${bon.non_du_technicien || ''}`, { size: 9, padding: 3 });
-    drawCell(left + half, signatureY, half, signatureNameHeight, `Nom du signataire: ${bon.nom_du_signataire_ || ''}`, { size: 9, padding: 3 });
     const signatureWidth = cm(5);
-    const signatureHeight = cm(4);
     const signatureX = left + half + ((half - signatureWidth) / 2);
-    const signatureBoxY = signatureY + signatureNameHeight + 6;
-    drawCell(signatureX, signatureBoxY, signatureWidth, signatureHeight, 'Bon pour accord', { align: 'center', size: 9, padding: 4 });
+    let signatureBuffer = null;
+    let signatureHeight = cm(1.5);
     if (bon.signature) {
       try {
-        const signatureBuffer = Buffer.from(String(bon.signature).split(',')[1], 'base64');
+        signatureBuffer = Buffer.from(String(bon.signature).split(',')[1], 'base64');
+        const imageWidth = signatureBuffer.readUInt32BE(16);
+        const imageHeight = signatureBuffer.readUInt32BE(20);
+        if (imageWidth > 0 && imageHeight > 0) {
+          const imageRequiredHeight = ((signatureWidth - 12) * imageHeight) / imageWidth;
+          signatureHeight = Math.min(cm(4), Math.max(cm(1.5), Math.ceil(imageRequiredHeight + 24)));
+        }
+      } catch { signatureBuffer = null; }
+    }
+    const signatureNameCells = [
+      { value: `Nom du technicien: ${bon.non_du_technicien || ''}`, options: { size: 9, padding: 3 } },
+      { value: `Nom du signataire: ${bon.nom_du_signataire_ || ''}`, options: { size: 9, padding: 3 } },
+    ];
+    const signatureNameHeight = adaptiveRowHeight([half, half], signatureNameCells, 19);
+    const legalText = 'Je déclare avoir pris connaissance et rester en possession d’un exemplaire des conditions générales de ventes au verso du présent document et les accepte dans leur intégralité.\nLa clause de réserve de propriété des marchandises vendues n’interviendra qu’après parfait paiement du prix convenu (Loi N° 80-335 du 12 mai 1980).';
+    const legalHeight = measureCellHeight(width, legalText, { size: 6, padding: 4 }, 26);
+    const pageBottom = doc.page.height - 54;
+    let signatureY = Math.max(pt(7.75), expenseBottom + 19);
+    let signatureBoxY = signatureY + signatureNameHeight + 6;
+    let legalY = Math.max(pt(10.559), signatureBoxY + signatureHeight + 18);
+    if (legalY + legalHeight > pageBottom) {
+      doc.addPage({ size: 'A4', margin: 0 });
+      drawHeader();
+      signatureY = pt(2.331);
+      signatureBoxY = signatureY + signatureNameHeight + 6;
+      legalY = signatureBoxY + signatureHeight + 24;
+    }
+    drawAdaptiveRow(left, signatureY, [half, half], signatureNameCells, 19);
+    drawCell(signatureX, signatureBoxY, signatureWidth, signatureHeight, 'Bon pour accord', { align: 'center', size: 9, padding: 4 });
+    if (signatureBuffer) {
+      try {
         doc.image(signatureBuffer, signatureX + 6, signatureBoxY + 18, {
           fit: [signatureWidth - 12, signatureHeight - 24], align: 'center', valign: 'center',
         });
       } catch { /* La présence du libellé conserve la zone si l'image est illisible. */ }
     }
-
-    const legalY = pt(10.559);
-    doc.save().lineWidth(0.25).strokeColor(black).rect(left, legalY, width, 26).stroke().restore();
-    doc.fillColor(black).font('Helvetica').fontSize(6).text(
-      'Je déclare avoir pris connaissance et rester en possession d’un exemplaire des conditions générales de ventes au verso du présent document et les accepte dans leur intégralité.\nLa clause de réserve de propriété des marchandises vendues n’interviendra qu’après parfait paiement du prix convenu (Loi N° 80-335 du 12 mai 1980).',
-      left + 4, legalY + 3, { width: width - 8, height: 20, lineGap: 0.3, align: 'left', ellipsis: true },
-    );
+    drawCell(left, legalY, width, legalHeight, legalText, { size: 6, padding: 4 });
 
     if (items.length > 2) {
       doc.addPage({ size: 'A4', margin: 0 });
@@ -521,20 +563,26 @@ async function generatePdf(bon, outputPath) {
       const columns = [61.1, 260.1, 40.4, 47.8, 77.85];
       const labels = ['CODE', 'DÉSIGNATION', 'PRIX', 'QTÉ', 'TOTAL H.T.'];
       let cursorY = pt(2.55);
-      let cursorX = left;
-      labels.forEach((label, index) => {
-        drawCell(cursorX, cursorY, columns[index], 18, label, { bold: true, align: 'center', size: 8, padding: 3 });
-        cursorX += columns[index];
-      });
-      cursorY += 18;
+      const continuationHeader = () => {
+        const header = drawAdaptiveRow(left, cursorY, columns, labels.map((label) => ({
+          value: label, options: { bold: true, align: 'center', size: 8, padding: 3 },
+        })), 18);
+        cursorY = header.bottom;
+      };
+      continuationHeader();
       continuation.forEach((item) => {
-        cursorX = left;
-        [item.code || '', item.designation || '', money(item.unit_price), number(item.quantity), money(item.line_total)]
-          .forEach((value, index) => {
-            drawCell(cursorX, cursorY, columns[index], 28, value, { align: index >= 2 ? 'right' : 'left', size: 8 });
-            cursorX += columns[index];
-          });
-        cursorY += 28;
+        const cells = [item.code || '', item.designation || '', money(item.unit_price), number(item.quantity), money(item.line_total)]
+          .map((value, index) => ({ value, options: { align: index >= 2 ? 'right' : 'left', size: 8 } }));
+        const requiredHeight = adaptiveRowHeight(columns, cells, 28);
+        if (cursorY + requiredHeight > pageBottom) {
+          doc.addPage({ size: 'A4', margin: 0 });
+          drawHeader();
+          doc.fillColor(black).font('Helvetica-Bold').fontSize(10)
+            .text('PIÈCES ET FOURNITURES - SUITE', left, pt(2.2), { width, align: 'center' });
+          cursorY = pt(2.55);
+          continuationHeader();
+        }
+        cursorY = drawAdaptiveRow(left, cursorY, columns, cells, 28).bottom;
       });
     }
     doc.end();
