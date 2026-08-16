@@ -111,6 +111,9 @@ app.get('/api/bons/:id/pdf', async (req, res) => {
   ].filter(Boolean);
   const pdfPath = candidates.find((candidate) => fs.existsSync(candidate));
   if (!pdfPath) return res.status(404).send('PDF introuvable.');
+  if (String(req.query.download || '') === '1') {
+    return res.download(pdfPath, path.basename(bon.pdf_filename || pdfPath));
+  }
   res.type('application/pdf').sendFile(pdfPath);
 });
 
@@ -350,7 +353,7 @@ async function syncBonToDolibarr(id) {
 async function generatePdf(bon, outputPath) {
   await new Promise((resolve, reject) => {
     const doc = new PDFDocument({
-      size: 'A4', margins: { top: 36, right: 36, bottom: 42, left: 36 }, bufferPages: true,
+      size: 'A4', margin: 0,
       info: { Title: `Bon d'intervention ${bon.public_ref}`, Author: 'GCRS Interventions' },
     });
     const output = fs.createWriteStream(outputPath);
@@ -359,164 +362,159 @@ async function generatePdf(bon, outputPath) {
     doc.on('error', reject);
     doc.pipe(output);
 
-    const navy = '#173b57';
-    const teal = '#008da8';
-    const pale = '#f2f6f8';
-    const border = '#cbd6dc';
-    const ink = '#1e2b33';
-    const muted = '#61717c';
-    const left = doc.page.margins.left;
-    const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-    const bottom = () => doc.page.height - doc.page.margins.bottom - 48;
+    const black = '#000000';
+    const left = 54;
+    const width = 487.25;
     const logoPath = path.join(publicDir, 'logo-enquete.png');
+    const pt = (inches) => inches * 72;
+    const cleanText = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
 
-    function pageHeader() {
-      const top = doc.page.margins.top;
-      doc.save().roundedRect(left, top, width, 70, 7).fill(navy).restore();
+    function drawCell(x, y, cellWidth, height, value, options = {}) {
+      const padding = options.padding ?? 4;
+      doc.save().lineWidth(0.25).strokeColor(black).rect(x, y, cellWidth, height).stroke().restore();
+      doc.fillColor(black).font(options.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(options.size || 8)
+        .text(cleanText(value), x + padding, y + padding, {
+          width: Math.max(cellWidth - (padding * 2), 1), height: Math.max(height - (padding * 2), 1),
+          align: options.align || 'left', valign: 'center', ellipsis: true, lineGap: 0,
+        });
+    }
+
+    function drawRows(x, y, columnWidths, rows) {
+      let cursorY = y;
+      for (const row of rows) {
+        let cursorX = x;
+        row.cells.forEach((cell, index) => {
+          drawCell(cursorX, cursorY, columnWidths[index], row.height, cell.value, cell.options);
+          cursorX += columnWidths[index];
+        });
+        cursorY += row.height;
+      }
+      return cursorY;
+    }
+
+    function drawHeader() {
       if (fs.existsSync(logoPath)) {
-        try {
-          doc.save().roundedRect(left + 10, top + 9, 126, 52, 4).fill('#ffffff').restore();
-          doc.image(logoPath, left + 16, top + 14, { fit: [114, 42], align: 'center', valign: 'center' });
-        } catch { /* Le texte de remplacement reste visible si le logo est illisible. */ }
+        try { doc.image(logoPath, left, pt(0.82), { fit: [pt(3.95), pt(0.68)], align: 'left', valign: 'center' }); } catch { /* logo facultatif */ }
       }
-      doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(17)
-        .text("BON D'INTERVENTION", left + 150, top + 16, { width: width - 162, align: 'right' });
-      doc.font('Helvetica').fontSize(9)
-        .text(String(bon.public_ref || ''), left + 150, top + 42, { width: width - 162, align: 'right' });
-      doc.y = top + 82;
+      doc.fillColor(black).font('Helvetica').fontSize(6)
+        .text('Machines et fournitures pour le façonnage et le pelliculage', left, pt(1.55), { width: pt(3.95), align: 'center' });
+      doc.fontSize(8).text([
+        'Parc d’Activités Les Portes du Dauphiné',
+        'Rue Ampère - 69780 SAINT PIERRE DE CHANDIEU',
+        'Tél. 04.78.40.26.32 - Fax. 04.78.40.25.83',
+        'Web: www.dimension.fr - EMAIL: commercial@dimensions.fr',
+        'N° TVA Intracommunautaire FR.15.320.860.869',
+      ].join('\n'), pt(4.69), pt(0.83), { width: pt(2.82), height: pt(0.9), align: 'center', lineGap: 0.5 });
     }
 
-    function ensureSpace(height) {
-      if (doc.y + height <= bottom()) return;
-      doc.addPage();
-      pageHeader();
-    }
-
-    function section(title) {
-      ensureSpace(34);
-      const y = doc.y;
-      doc.save().roundedRect(left, y, width, 22, 3).fill(teal).restore();
-      doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(10).text(title, left + 8, y + 6, { width: width - 16 });
-      doc.y = y + 28;
-    }
-
-    function field(label, value) {
-      const cleanValue = String(value ?? '').trim() || '-';
-      doc.font('Helvetica').fontSize(9);
-      const valueWidth = width - 150;
-      const height = Math.max(30, doc.heightOfString(cleanValue, { width: valueWidth - 16 }) + 14);
-      ensureSpace(height + 2);
-      const y = doc.y;
-      doc.save().roundedRect(left, y, width, height, 3).fillAndStroke(pale, border).restore();
-      doc.fillColor(muted).font('Helvetica-Bold').fontSize(8).text(label.toUpperCase(), left + 8, y + 9, { width: 126 });
-      doc.fillColor(ink).font('Helvetica').fontSize(9).text(cleanValue, left + 142, y + 8, { width: valueWidth - 8 });
-      doc.y = y + height + 3;
-    }
-
-    function textBlock(value) {
-      const cleanValue = String(value ?? '').trim() || '-';
-      doc.font('Helvetica').fontSize(9.5);
-      const height = Math.max(48, doc.heightOfString(cleanValue, { width: width - 20 }) + 20);
-      ensureSpace(height + 2);
-      const y = doc.y;
-      doc.save().roundedRect(left, y, width, height, 3).fillAndStroke('#ffffff', border).restore();
-      doc.fillColor(ink).text(cleanValue, left + 10, y + 10, { width: width - 20, lineGap: 2 });
-      doc.y = y + height + 3;
-    }
-
-    function piecesHeader() {
-      const y = doc.y;
-      const columns = [72, width - 262, 70, 48, 72];
+    function drawPiecesTable(items, startY, availableHeight = 59.2) {
+      const columns = [61.1, 260.1, 40.4, 47.8, 77.85];
+      const labels = ['CODE', 'DÉSIGNATION', 'PRIX', 'QTÉ', 'TOTAL H.T.'];
       let x = left;
-      ['Code', 'Désignation', 'P.U. HT', 'Qté', 'Total HT'].forEach((label, index) => {
-        doc.save().rect(x, y, columns[index], 24).fillAndStroke(navy, '#ffffff').restore();
-        doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8)
-          .text(label, x + 4, y + 8, { width: columns[index] - 8, align: index >= 2 ? 'right' : 'left' });
+      labels.forEach((label, index) => {
+        drawCell(x, startY, columns[index], 14.75, label, { bold: true, align: 'center', size: 8, padding: 2 });
         x += columns[index];
       });
-      doc.y = y + 24;
-    }
-
-    function pieceRow(item) {
-      const columns = [72, width - 262, 70, 48, 72];
-      const values = [item.code || '-', item.designation || 'Pièce', money(item.unit_price), number(item.quantity), money(item.line_total)];
-      doc.font('Helvetica').fontSize(8);
-      const rowHeight = Math.max(25, ...values.map((value, index) => doc.heightOfString(String(value), { width: columns[index] - 8 }) + 12));
-      if (doc.y + rowHeight > bottom()) {
-        doc.addPage();
-        pageHeader();
-        piecesHeader();
+      const visible = items.slice(0, 2);
+      const rowCount = Math.max(visible.length, 2);
+      const rowHeight = availableHeight / rowCount;
+      for (let row = 0; row < rowCount; row += 1) {
+        const item = visible[row] || {};
+        const values = item.designation || item.code ? [
+          item.code || '', item.designation || '', money(item.unit_price), number(item.quantity), money(item.line_total),
+        ] : ['', '', '', '', ''];
+        x = left;
+        values.forEach((value, index) => {
+          drawCell(x, startY + 14.75 + (row * rowHeight), columns[index], rowHeight, value, {
+            align: index >= 2 ? 'right' : 'left', size: 8, padding: 4,
+          });
+          x += columns[index];
+        });
       }
-      const y = doc.y;
-      let x = left;
-      values.forEach((value, index) => {
-        doc.save().rect(x, y, columns[index], rowHeight).fillAndStroke(index % 2 ? '#ffffff' : pale, border).restore();
-        doc.fillColor(ink).font('Helvetica').fontSize(8)
-          .text(String(value), x + 4, y + 7, { width: columns[index] - 8, align: index >= 2 ? 'right' : 'left' });
-        x += columns[index];
-      });
-      doc.y = y + rowHeight;
+      return startY + 14.75 + availableHeight;
     }
 
-    pageHeader();
-    section('Références');
-    field('Référence du bon', bon.public_ref);
-    field('Date et heure', formatDateTime(bon.date_et_heure1));
-    field('Type de bon', bon.bon_de);
-    field('Référence client', bon.ref_cde_client);
+    drawHeader();
 
-    section('Client et matériel');
-    field('Client', bon.client);
-    field('Adresse', bon.adresse);
-    field('Téléphone', bon.tel_);
-    field('E-mail', bon.mail);
-    field('Matériel', bon.type_materiel_);
-    field('Matricule / série', bon.n_de_matricule_);
+    const clientY = pt(2.331);
+    const half = width / 2;
+    drawRows(left, clientY, [half, half], [
+      { height: 21.85, cells: [{ value: `Date: ${formatDateTime(bon.date_et_heure1)}` }, { value: `Client : ${bon.client || ''}` }] },
+      { height: 21.85, cells: [{ value: `Réf. Cde client : ${bon.ref_cde_client || ''}` }, { value: `Adresse : ${bon.adresse || ''}` }] },
+      { height: 21.85, cells: [{ value: `Tél : ${bon.tel_ || ''}` }, { value: `@ Mail: ${bon.mail || ''}` }] },
+    ]);
 
-    section('Intervention');
-    field('Technicien', bon.non_du_technicien);
-    field('Horaires', `${bon.heures_d_arrivee || '-'} - ${bon.heure_depart || '-'} - Temps passé : ${bon.temps_passe || '-'}`);
-    field('Déplacement', `${bon.deplacement || '-'} - ${number(bon.km)} km - Repas : ${number(bon.repas)} - Hôtel : ${number(bon.hotel)} - Autoroute : ${money(bon.autoroute)}`);
-    section('Travail effectué');
-    textBlock(bon.travail_effectue);
+    const bonY = pt(3.127);
+    drawRows(left, bonY, [width], [
+      { height: 23.2, cells: [{ value: 'BON DE :', options: { bold: true, align: 'center', size: 8 } }] },
+      { height: 23.2, cells: [{ value: bon.bon_de || '', options: { align: 'center', size: 8 } }] },
+    ]);
 
+    const workY = pt(3.848);
+    const typeWidth = width * (6409 / 10458);
+    drawCell(left, workY, typeWidth, 22.7, `TYPE MATÉRIEL: ${bon.type_materiel_ || ''}`, { size: 8 });
+    drawCell(left + typeWidth, workY, width - typeWidth, 22.7, `N° matricule: ${bon.n_de_matricule_ || ''}`, { size: 8 });
+    drawCell(left, workY + 22.7, width, 28, `TRAVAIL EFFECTUÉ: ${bon.travail_effectue || ''}`, { size: 8 });
+
+    doc.fillColor(black).font('Helvetica-Bold').fontSize(8)
+      .text('PIÈCES ET FOURNITURES :', left, pt(5.62), { width });
     const items = Array.isArray(bon.items) ? bon.items : [];
-    ensureSpace(items.length ? 90 : 82);
-    section('Pièces et fournitures');
-    if (items.length) {
-      piecesHeader();
-      items.forEach(pieceRow);
-      const totalHt = items.reduce((sum, item) => sum + (Number(item.line_total) || 0), 0);
-      ensureSpace(44);
-      const totalY = doc.y + 8;
-      doc.fillColor(navy).font('Helvetica-Bold').fontSize(10)
-        .text(`Total HT : ${money(totalHt)}`, left, totalY, { width, align: 'right' });
-      doc.y = totalY + 24;
-    } else {
-      textBlock('Aucune pièce ou fourniture déclarée.');
-    }
+    const expensesY = drawPiecesTable(items, pt(5.846));
+    const expenseColumns = [126.1, 95.3, 125.1, 140.75];
+    drawRows(left, expensesY, expenseColumns, [
+      { height: 22.1, cells: [
+        { value: `REPAS: ${number(bon.repas)}` }, { value: `KM: ${number(bon.km)}` },
+        { value: `Heure d’arrivée: ${bon.heures_d_arrivee || ''}` }, { value: `TEMPS PASSÉ ${bon.temps_passe || ''}` },
+      ] },
+      { height: 21.75, cells: [
+        { value: `HÔTEL: ${number(bon.hotel)}` }, { value: `Autoroute: ${money(bon.autoroute)}` },
+        { value: `Heure départ: ${bon.heure_depart || ''}` }, { value: `DÉPLACEMENT ${bon.deplacement || ''}` },
+      ] },
+    ]);
 
-    section('Accord et signature du client');
-    field('Signataire', bon.nom_du_signataire_);
-    ensureSpace(120);
-    const signatureY = doc.y;
-    doc.save().roundedRect(left, signatureY, width, 105, 3).fillAndStroke('#ffffff', border).restore();
-    doc.fillColor(muted).font('Helvetica-Bold').fontSize(8).text('BON POUR ACCORD - SIGNATURE', left + 10, signatureY + 9);
+    const signatureY = pt(9.57);
+    drawCell(left, signatureY, half, 21.25, `Nom du technicien: ${bon.non_du_technicien || ''}`, { size: 9 });
+    drawCell(left + half, signatureY, half, 21.25, `Nom du signataire: ${bon.nom_du_signataire_ || ''}`, { size: 9 });
+    const signatureHeight = 43;
+    drawCell(left, signatureY + 21.25, width, signatureHeight, 'Bon pour accord', { align: 'center', size: 9, padding: 4 });
     if (bon.signature) {
       try {
         const signatureBuffer = Buffer.from(String(bon.signature).split(',')[1], 'base64');
-        doc.image(signatureBuffer, left + 12, signatureY + 25, { fit: [width - 24, 68], align: 'center', valign: 'center' });
-      } catch {
-        doc.fillColor(muted).font('Helvetica-Oblique').fontSize(9).text('Signature enregistrée', left + 12, signatureY + 50, { width: width - 24, align: 'center' });
-      }
+        doc.image(signatureBuffer, left + 8, signatureY + 33, { fit: [width - 16, 28], align: 'center', valign: 'center' });
+      } catch { /* La présence du libellé conserve la zone si l'image est illisible. */ }
     }
-    doc.y = signatureY + 112;
 
-    const range = doc.bufferedPageRange();
-    for (let index = range.start; index < range.start + range.count; index += 1) {
-      doc.switchToPage(index);
-      doc.fillColor(muted).font('Helvetica').fontSize(7.5)
-        .text(`GCRS Interventions - ${bon.public_ref} - Page ${index + 1}/${range.count}`, left, doc.page.height - doc.page.margins.bottom - 28, { width, align: 'center', lineBreak: false });
+    const legalY = pt(10.62);
+    doc.save().lineWidth(0.25).strokeColor(black).rect(left, legalY, width, 26).stroke().restore();
+    doc.fillColor(black).font('Helvetica').fontSize(5.5).text(
+      'Je déclare avoir pris connaissance et rester en possession d’un exemplaire des conditions générales de ventes au verso du présent document et les accepte dans leur intégralité.\nLa clause de réserve de propriété des marchandises vendues n’interviendra qu’après parfait paiement du prix convenu (Loi N° 80-335 du 12 mai 1980).',
+      left + 4, legalY + 3, { width: width - 8, height: 20, lineGap: 0.3, align: 'left', ellipsis: true },
+    );
+
+    if (items.length > 2) {
+      doc.addPage({ size: 'A4', margin: 0 });
+      drawHeader();
+      doc.fillColor(black).font('Helvetica-Bold').fontSize(10)
+        .text('PIÈCES ET FOURNITURES - SUITE', left, pt(2.2), { width, align: 'center' });
+      const continuation = items.slice(2);
+      const columns = [61.1, 260.1, 40.4, 47.8, 77.85];
+      const labels = ['CODE', 'DÉSIGNATION', 'PRIX', 'QTÉ', 'TOTAL H.T.'];
+      let cursorY = pt(2.55);
+      let cursorX = left;
+      labels.forEach((label, index) => {
+        drawCell(cursorX, cursorY, columns[index], 18, label, { bold: true, align: 'center', size: 8, padding: 3 });
+        cursorX += columns[index];
+      });
+      cursorY += 18;
+      continuation.forEach((item) => {
+        cursorX = left;
+        [item.code || '', item.designation || '', money(item.unit_price), number(item.quantity), money(item.line_total)]
+          .forEach((value, index) => {
+            drawCell(cursorX, cursorY, columns[index], 28, value, { align: index >= 2 ? 'right' : 'left', size: 8 });
+            cursorX += columns[index];
+          });
+        cursorY += 28;
+      });
     }
     doc.end();
   });
