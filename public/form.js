@@ -17,8 +17,11 @@ let dolibarrConfigured = false;
 let searchTimer;
 
 function localDateTimeValue(date = new Date()) {
-  const offset = date.getTimezoneOffset() * 60000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+  const rounded = new Date(date);
+  rounded.setSeconds(0, 0);
+  rounded.setMinutes(Math.floor(rounded.getMinutes() / 5) * 5);
+  const offset = rounded.getTimezoneOffset() * 60000;
+  return new Date(rounded.getTime() - offset).toISOString().slice(0, 16);
 }
 
 document.querySelector('#dateHeureInput').value = localDateTimeValue();

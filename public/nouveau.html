@@ -4,20 +4,28 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#173b57">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="GCRS">
   <title>Nouveau document · GCRS Interventions</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/app-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="stylesheet" href="/app.css">
+  <script src="/offline-store.js" defer></script>
+  <script src="/pwa.js" defer></script>
   <script src="/nouveau.js" defer></script>
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar">
-      <a class="brand" href="/"><span class="brand-mark">GI</span><span><span class="brand-name">GCRS Interventions</span><span class="brand-subtitle">Pilotage terrain</span></span></a>
+      <a class="brand" href="/"><span class="brand-mark"><img src="/logo-gcrs.png" alt=""></span><span><span class="brand-name">GCRS Interventions</span><span class="brand-subtitle">Pilotage terrain</span></span></a>
       <nav class="nav" aria-label="Navigation principale">
         <a href="/"><span class="nav-icon">⌂</span><span>Tableau de bord</span></a>
         <a class="active" href="/nouveau.html"><span class="nav-icon">＋</span><span>Nouveau document</span></a>
         <a href="/historique.html"><span class="nav-icon">▤</span><span>Historique</span></a>
       </nav>
-      <div class="sidebar-foot">Application métier · v3.0</div>
+      <div class="sidebar-foot">Application métier · v4.0 · Hors ligne</div>
     </aside>
 
     <main class="main">
@@ -36,6 +44,7 @@
           <input type="hidden" name="extra_json" id="extraJson" value="{}">
           <input type="hidden" name="signature" id="signatureClientInput">
           <input type="hidden" name="signature_technicien" id="signatureTechInput">
+          <input type="hidden" name="client_request_id" id="clientRequestId">
 
           <section class="form-card document-picker">
             <div class="form-card-head"><span class="form-card-number">1</span><div><h2>Type de document</h2><p class="section-help">Les anciens formulaires Kizeo sont regroupés ici sans perdre leurs champs métier.</p></div></div>
@@ -121,7 +130,7 @@
                   </div>
                   <label class="checkbox sync-choice"><input id="syncInput" name="sync_dolibarr" value="1" type="checkbox"><span>Créer dans Dolibarr après l’enregistrement</span></label>
                   <button class="btn btn-primary" id="submitButton" type="submit">Enregistrer et télécharger le PDF</button>
-                  <p class="hint" style="text-align:center">Fiche d’intervention, commande si pièces, puis facture brouillon.</p>
+                  <p class="hint offline-explanation">Sans Internet, le bon reste sur cet appareil. Le PDF et l’envoi Dolibarr seront réalisés automatiquement à la reconnexion.</p>
                 </div>
               </div>
             </aside>

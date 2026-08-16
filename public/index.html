@@ -4,15 +4,23 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#173b57">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="GCRS">
   <title>Tableau de bord · GCRS Interventions</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/app-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="stylesheet" href="/app.css">
+  <script src="/offline-store.js" defer></script>
+  <script src="/pwa.js" defer></script>
   <script src="/dashboard.js" defer></script>
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar">
       <a class="brand" href="/" aria-label="GCRS Interventions">
-        <span class="brand-mark">GI</span>
+        <span class="brand-mark"><img src="/logo-gcrs.png" alt=""></span>
         <span><span class="brand-name">GCRS Interventions</span><span class="brand-subtitle">Pilotage terrain</span></span>
       </a>
       <nav class="nav" aria-label="Navigation principale">
@@ -20,7 +28,7 @@
         <a href="/nouveau.html"><span class="nav-icon">＋</span><span>Nouveau document</span></a>
         <a href="/historique.html"><span class="nav-icon">▤</span><span>Historique</span></a>
       </nav>
-      <div class="sidebar-foot">Application métier · v2.0</div>
+      <div class="sidebar-foot">Application métier · v4.0 · Hors ligne</div>
     </aside>
 
     <main class="main">

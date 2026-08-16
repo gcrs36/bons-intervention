@@ -8,29 +8,54 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => 
 const dateTime = (value) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? 'Date inconnue' : new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }).format(date); };
 
 function syncBadge(state) {
-  const states = { synced: ['Synchronisé', 'badge-success'], syncing: ['En cours', 'badge-warning'], pending: ['À synchroniser', 'badge-warning'], error: ['Erreur', 'badge-error'], not_configured: ['Local', 'badge-muted'] };
+  const states = { synced: ['Synchronisé', 'badge-success'], syncing: ['En cours', 'badge-warning'], pending: ['À synchroniser', 'badge-warning'], offline_pending: ['Hors ligne', 'badge-warning'], error: ['Erreur', 'badge-error'], not_configured: ['Local', 'badge-muted'] };
   const [label, css] = states[state] || ['En attente', 'badge-muted'];
   return `<span class="badge ${css}"${state === 'error' ? ' title="Erreur de synchronisation"' : ''}>${label}</span>`;
 }
 
 async function loadHistory() {
   rows.innerHTML = '<tr><td colspan="6" class="empty">Chargement…</td></tr>';
+  let pending = [];
+  let bons = [];
+  let cached = false;
+  try {
+    pending = await window.OfflineStore?.getPending() || [];
+  } catch { pending = []; }
   try {
     const query = new URLSearchParams(new FormData(filters));
     [...query].forEach(([key, value]) => { if (!value) query.delete(key); });
     const response = await fetch(`/api/bons?${query}`);
     if (!response.ok) throw new Error('Impossible de charger les interventions.');
-    const { bons } = await response.json();
-    rows.innerHTML = bons.length ? bons.map(renderRow).join('') : '<tr><td colspan="6" class="empty">Aucune intervention ne correspond aux critères.</td></tr>';
-  } catch (error) {
-    rows.innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(error.message)}</td></tr>`;
+    ({ bons } = await response.json());
+    await window.OfflineStore?.cacheServerBons(bons);
+  } catch {
+    cached = true;
+    try { bons = await window.OfflineStore?.getCachedServerBons() || []; } catch { bons = []; }
   }
+  const search = document.querySelector('#search').value.trim().toLowerCase();
+  const visiblePending = pending.filter((entry) => !search || [entry.localRef, entry.payload.client, entry.payload.non_du_technicien].some((value) => String(value || '').toLowerCase().includes(search)));
+  const content = [...visiblePending.map(renderOfflineRow), ...bons.map(renderRow)];
+  rows.innerHTML = content.length ? content.join('') : '<tr><td colspan="6" class="empty">Aucune intervention ne correspond aux critères.</td></tr>';
+  if (cached && bons.length) showToast('Mode hors connexion : affichage du dernier historique conservé sur cet appareil.');
+}
+
+function renderOfflineRow(entry) {
+  const bon = entry.payload || {};
+  const details = entry.lastError ? `Dernière tentative : ${entry.lastError}` : 'Le PDF sera généré après l’envoi au serveur.';
+  return `<tr class="offline-row">
+    <td><div class="ref">${escapeHtml(entry.localRef)}</div><div class="sub">${dateTime(bon.date_et_heure1 || entry.createdAt)}</div></td>
+    <td><strong>${escapeHtml(bon.client || 'Non renseigné')}</strong><div class="sub">${escapeHtml(bon.ref_cde_client || 'Sans référence client')}</div></td>
+    <td>${escapeHtml(typeLabels[bon.bon_type] || bon.bon_de || 'Document')}<div class="sub">${escapeHtml([(bon.bon_variant || '').toUpperCase(), bon.type_materiel_].filter(Boolean).join(' · '))}</div></td>
+    <td>${escapeHtml(bon.non_du_technicien || '—')}</td>
+    <td>${syncBadge('offline_pending')}<div class="sub">${escapeHtml(details)}</div></td>
+    <td><div class="topbar-actions"><button class="btn btn-ghost btn-small upload-offline" type="button" data-local-id="${escapeHtml(entry.localId)}"${navigator.onLine ? '' : ' disabled'}>Envoyer maintenant</button></div></td>
+  </tr>`;
 }
 
 function renderRow(bon) {
   const doliRefs = [bon.dolibarr_intervention_id && `FI #${bon.dolibarr_intervention_id}`, bon.dolibarr_order_id && `CO #${bon.dolibarr_order_id}`, bon.dolibarr_invoice_id && `FA #${bon.dolibarr_invoice_id}`].filter(Boolean).join(' · ');
   const syncDetails = [doliRefs, bon.sync_state === 'error' && bon.sync_error].filter(Boolean).join(' · ');
-  const canSync = dolibarrConfigured && bon.sync_state !== 'synced' && bon.sync_state !== 'syncing';
+  const canSync = navigator.onLine && dolibarrConfigured && bon.sync_state !== 'synced' && bon.sync_state !== 'syncing';
   return `<tr>
     <td><div class="ref">${escapeHtml(bon.public_ref || `BI-${bon.id}`)}</div><div class="sub">${dateTime(bon.date_et_heure1)}</div></td>
     <td><strong>${escapeHtml(bon.client || 'Non renseigné')}</strong><div class="sub">${escapeHtml(bon.ref_cde_client || 'Sans référence client')}</div></td>
@@ -52,6 +77,19 @@ async function configure() {
 
 filters.addEventListener('submit', (event) => { event.preventDefault(); loadHistory(); });
 rows.addEventListener('click', async (event) => {
+  const uploadButton = event.target.closest('.upload-offline');
+  if (uploadButton) {
+    uploadButton.disabled = true; uploadButton.textContent = 'Envoi…';
+    try {
+      await window.OfflineStore.syncOne(uploadButton.dataset.localId);
+      showToast('Le bon hors ligne a été envoyé. Son PDF est maintenant disponible.');
+      await loadHistory();
+    } catch (error) {
+      showToast(error.message || 'Envoi impossible.', true);
+      uploadButton.disabled = false; uploadButton.textContent = 'Réessayer';
+    }
+    return;
+  }
   const button = event.target.closest('.sync-btn');
   if (!button) return;
   button.disabled = true; button.textContent = 'En cours…';
@@ -71,5 +109,8 @@ function showToast(message, error = false) {
   setTimeout(() => { toast.className = 'toast'; }, 4500);
 }
 
-if (new URLSearchParams(location.search).has('created')) showToast('Le bon signé a bien été enregistré.');
+const pageParameters = new URLSearchParams(location.search);
+if (pageParameters.has('created')) showToast('Le bon signé a bien été enregistré.');
+if (pageParameters.has('queued')) showToast('Le bon est enregistré hors connexion sur cet appareil.');
+document.addEventListener('gcrs:server-updated', loadHistory);
 configure();

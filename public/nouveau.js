@@ -10,6 +10,7 @@ const clientInput = document.querySelector('#clientInput');
 const clientResults = document.querySelector('#clientResults');
 const clientHint = document.querySelector('#clientHint');
 const dolibarrThirdpartyId = document.querySelector('#dolibarrThirdpartyId');
+const clientRequestId = document.querySelector('#clientRequestId');
 const toast = document.querySelector('#toast');
 const money = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
 
@@ -21,11 +22,15 @@ let rowCounter = 0;
 const signatureState = { client: false, tech: false };
 
 function localDateTimeValue(date = new Date()) {
-  const offset = date.getTimezoneOffset() * 60000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+  const rounded = new Date(date);
+  rounded.setSeconds(0, 0);
+  rounded.setMinutes(Math.floor(rounded.getMinutes() / 5) * 5);
+  const offset = rounded.getTimezoneOffset() * 60000;
+  return new Date(rounded.getTime() - offset).toISOString().slice(0, 16);
 }
 
 document.querySelector('#dateHeureInput').value = localDateTimeValue();
+clientRequestId.value = window.OfflineStore?.createId() || window.crypto?.randomUUID?.() || `request-${Date.now()}`;
 
 async function initialize() {
   try {
@@ -439,7 +444,19 @@ form.addEventListener('submit', async (event) => {
     extraJson.value = JSON.stringify(extra);
     document.querySelector('#signatureClientInput').value = signatureState.client ? document.querySelector('#signatureClientCanvas').toDataURL('image/png') : '';
     document.querySelector('#signatureTechInput').value = extra.signature_technicien;
-    const response = await fetch(form.action, { method: 'POST', headers: { Accept: 'application/json' }, body: new URLSearchParams(new FormData(form)) });
+    const payload = Object.fromEntries(new FormData(form).entries());
+    if (!navigator.onLine) {
+      await saveOffline(payload, button);
+      return;
+    }
+    let response;
+    try {
+      response = await fetch(form.action, { method: 'POST', headers: { Accept: 'application/json' }, body: new URLSearchParams(payload) });
+    } catch (error) {
+      if (!window.OfflineStore) throw error;
+      await saveOffline(payload, button);
+      return;
+    }
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || 'Impossible d’enregistrer le document.');
     const download = document.createElement('a');
@@ -460,11 +477,25 @@ form.addEventListener('submit', async (event) => {
   }
 });
 
+async function saveOffline(payload, button) {
+  if (!window.OfflineStore) throw new Error('Le stockage hors ligne n’est pas encore disponible. Rechargez la page une fois avec Internet.');
+  button.textContent = 'Enregistrement hors connexion…';
+  const entry = await window.OfflineStore.queueBon(payload, { endpoint: form.action });
+  await window.GCRSPWA?.requestBackgroundSync();
+  showToast(`${entry.localRef} est conservé sur cet appareil. Le PDF sera créé dès le retour d’Internet.`);
+  button.textContent = 'Bon enregistré hors connexion';
+  window.setTimeout(() => { window.location.href = `/historique.html?queued=${encodeURIComponent(entry.localId)}`; }, 1600);
+}
+
 function configureDolibarr(config) {
   dolibarrConfigured = Boolean(config.dolibarr?.configured);
   const notice = document.querySelector('#doliNotice');
   const badge = document.querySelector('#connectionBadge');
-  if (dolibarrConfigured) {
+  if (!navigator.onLine) {
+    notice.className = 'notice notice-warning';
+    notice.textContent = 'Hors connexion : le bon sera conservé sur cet appareil puis envoyé automatiquement.';
+    badge.className = 'badge badge-warning'; badge.textContent = 'Hors connexion';
+  } else if (dolibarrConfigured) {
     notice.className = 'notice notice-success';
     notice.textContent = 'Dolibarr configuré : fiche, commande éventuelle, facture brouillon et PDF GED.';
     badge.className = 'badge badge-success'; badge.textContent = 'Dolibarr connecté';

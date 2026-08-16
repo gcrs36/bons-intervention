@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="GCRS">
+  <rect width="512" height="512" rx="92" fill="#173b57"/>
+  <rect x="58" y="58" width="396" height="396" rx="72" fill="#fff"/>
+  <circle cx="256" cy="222" r="94" fill="#202426"/>
+  <circle cx="256" cy="222" r="52" fill="#fff"/>
+  <circle cx="256" cy="222" r="16" fill="#1aa7cf"/>
+  <path d="M256 205 204 116c28-13 61-15 91-5l-21 97z" fill="#fff"/>
+  <path d="M269 225 377 238c-4 31-22 60-47 78l-72-79z" fill="#bad51e"/>
+  <path d="M244 232 181 330c-26-20-43-49-46-81l103-29z" fill="#10a9d5"/>
+  <text x="256" y="394" text-anchor="middle" font-family="Arial, sans-serif" font-size="62" font-weight="800" letter-spacing="4" fill="#173b57">GCRS</text>
+</svg>
