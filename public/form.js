@@ -72,12 +72,26 @@ function updateItems() {
 }
 
 document.querySelector('#addItem').addEventListener('click', () => addItem());
-rowsContainer.addEventListener('input', updateItems);
+rowsContainer.addEventListener('input', (event) => {
+  updateItems();
+  if (!event.target.matches('.item-code, .item-designation')) return;
+  const rows = [...rowsContainer.querySelectorAll('.data-row')];
+  const lastRow = rows.at(-1);
+  if (!lastRow) return addItem();
+  const hasContent = lastRow.querySelector('.item-code').value.trim()
+    || lastRow.querySelector('.item-designation').value.trim();
+  if (hasContent) addItem();
+});
 rowsContainer.addEventListener('click', (event) => {
   const button = event.target.closest('.remove-item');
   if (!button) return;
   button.closest('.data-row').remove();
-  updateItems();
+  const rows = [...rowsContainer.querySelectorAll('.data-row')];
+  if (!rows.length) return addItem();
+  const lastRow = rows.at(-1);
+  const hasContent = lastRow.querySelector('.item-code').value.trim()
+    || lastRow.querySelector('.item-designation').value.trim();
+  if (hasContent) addItem(); else updateItems();
 });
 addItem();
 
