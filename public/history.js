@@ -3,6 +3,14 @@ const filters = document.querySelector('#filters');
 const toast = document.querySelector('#toast');
 let dolibarrConfigured = false;
 const typeLabels = { intervention: 'Intervention', visite_massicot: 'Visite massicot', mise_en_service: 'Mise en service', fiche_machine: 'Fiche machine' };
+const companies = {
+  gcrs: { label: 'GCRS', color: '#173b57' },
+  dimensions: { label: 'Dimensions', color: '#9b1b30' },
+  esi: { label: 'ESI', color: '#5553a6' },
+  abeg: { label: 'ABEG', color: '#1b5b8c' },
+  arboreal: { label: 'ARBOREAL', color: '#43845b' },
+  clementz: { label: 'Clementz', color: '#515b63' },
+};
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
 const dateTime = (value) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? 'Date inconnue' : new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }).format(date); };
@@ -13,8 +21,21 @@ function syncBadge(state) {
   return `<span class="badge ${css}"${state === 'error' ? ' title="Erreur de synchronisation"' : ''}>${label}</span>`;
 }
 
+function companyBadge(companyId) {
+  const company = companies[companyId] || { label: companyId || 'Non classé', color: '#667d8d' };
+  return `<span class="company-badge" style="--company-color:${company.color}">${escapeHtml(company.label)}</span>`;
+}
+
+function matchesLocalFilters(bon, search, company, sync) {
+  const matchesSearch = !search || [bon.public_ref, bon.localRef, bon.client, bon.ref_cde_client, bon.non_du_technicien]
+    .some((value) => String(value || '').toLowerCase().includes(search));
+  const matchesCompany = !company || bon.bon_variant === company;
+  const matchesSync = !sync || bon.sync_state === sync;
+  return matchesSearch && matchesCompany && matchesSync;
+}
+
 async function loadHistory() {
-  rows.innerHTML = '<tr><td colspan="6" class="empty">Chargement…</td></tr>';
+  rows.innerHTML = '<tr><td colspan="7" class="empty">Chargement…</td></tr>';
   let pending = [];
   let bons = [];
   let cached = false;
@@ -33,9 +54,15 @@ async function loadHistory() {
     try { bons = await window.OfflineStore?.getCachedServerBons() || []; } catch { bons = []; }
   }
   const search = document.querySelector('#search').value.trim().toLowerCase();
-  const visiblePending = pending.filter((entry) => !search || [entry.localRef, entry.payload.client, entry.payload.non_du_technicien].some((value) => String(value || '').toLowerCase().includes(search)));
+  const company = document.querySelector('#companyFilter').value;
+  const sync = document.querySelector('#syncFilter').value;
+  if (cached) bons = bons.filter((bon) => matchesLocalFilters(bon, search, company, sync));
+  const visiblePending = pending.filter((entry) => {
+    const bon = { ...entry.payload, localRef: entry.localRef, sync_state: 'pending' };
+    return matchesLocalFilters(bon, search, company, sync);
+  });
   const content = [...visiblePending.map(renderOfflineRow), ...bons.map(renderRow)];
-  rows.innerHTML = content.length ? content.join('') : '<tr><td colspan="6" class="empty">Aucune intervention ne correspond aux critères.</td></tr>';
+  rows.innerHTML = content.length ? content.join('') : '<tr><td colspan="7" class="empty">Aucune intervention ne correspond aux critères.</td></tr>';
   if (cached && bons.length) showToast('Mode hors connexion : affichage du dernier historique conservé sur cet appareil.');
 }
 
@@ -44,8 +71,9 @@ function renderOfflineRow(entry) {
   const details = entry.lastError ? `Dernière tentative : ${entry.lastError}` : 'Le PDF sera généré après l’envoi au serveur.';
   return `<tr class="offline-row">
     <td><div class="ref">${escapeHtml(entry.localRef)}</div><div class="sub">${dateTime(bon.date_et_heure1 || entry.createdAt)}</div></td>
+    <td>${companyBadge(bon.bon_variant)}</td>
     <td><strong>${escapeHtml(bon.client || 'Non renseigné')}</strong><div class="sub">${escapeHtml(bon.ref_cde_client || 'Sans référence client')}</div></td>
-    <td>${escapeHtml(typeLabels[bon.bon_type] || bon.bon_de || 'Document')}<div class="sub">${escapeHtml([(bon.bon_variant || '').toUpperCase(), bon.type_materiel_].filter(Boolean).join(' · '))}</div></td>
+    <td>${escapeHtml(typeLabels[bon.bon_type] || bon.bon_de || 'Document')}<div class="sub">${escapeHtml(bon.type_materiel_ || 'Matériel non renseigné')}</div></td>
     <td>${escapeHtml(bon.non_du_technicien || '—')}</td>
     <td>${syncBadge('offline_pending')}<div class="sub">${escapeHtml(details)}</div></td>
     <td><div class="topbar-actions"><button class="btn btn-ghost btn-small upload-offline" type="button" data-local-id="${escapeHtml(entry.localId)}"${navigator.onLine ? '' : ' disabled'}>Envoyer maintenant</button></div></td>
@@ -58,8 +86,9 @@ function renderRow(bon) {
   const canSync = navigator.onLine && dolibarrConfigured && bon.sync_state !== 'synced' && bon.sync_state !== 'syncing';
   return `<tr>
     <td><div class="ref">${escapeHtml(bon.public_ref || `BI-${bon.id}`)}</div><div class="sub">${dateTime(bon.date_et_heure1)}</div></td>
+    <td>${companyBadge(bon.bon_variant)}</td>
     <td><strong>${escapeHtml(bon.client || 'Non renseigné')}</strong><div class="sub">${escapeHtml(bon.ref_cde_client || 'Sans référence client')}</div></td>
-    <td>${escapeHtml(typeLabels[bon.bon_type] || bon.bon_de || 'Intervention')}<div class="sub">${escapeHtml([(bon.bon_variant || '').toUpperCase(), bon.type_materiel_ || 'Matériel non renseigné'].filter(Boolean).join(' · '))}</div></td>
+    <td>${escapeHtml(typeLabels[bon.bon_type] || bon.bon_de || 'Intervention')}<div class="sub">${escapeHtml(bon.type_materiel_ || 'Matériel non renseigné')}</div></td>
     <td>${escapeHtml(bon.non_du_technicien || '—')}</td>
     <td>${syncBadge(bon.sync_state)}<div class="sub">${escapeHtml(syncDetails)}</div></td>
     <td><div class="topbar-actions"><a class="btn btn-secondary btn-small" href="/api/bons/${bon.id}/pdf" target="_blank" rel="noopener">PDF</a>${canSync ? `<button class="btn btn-ghost btn-small sync-btn" type="button" data-id="${bon.id}">Synchroniser</button>` : ''}</div></td>
@@ -68,9 +97,13 @@ function renderRow(bon) {
 
 async function configure() {
   try {
-    const response = await fetch('/api/config');
+    const [response, typesResponse] = await Promise.all([fetch('/api/config'), fetch('/api/bon-types')]);
     const config = await response.json();
     dolibarrConfigured = Boolean(config.dolibarr?.configured);
+    if (typesResponse.ok) {
+      const schemas = await typesResponse.json();
+      Object.values(schemas.types || {}).forEach((definition) => { typeLabels[definition.id] = definition.label; });
+    }
   } catch { dolibarrConfigured = false; }
   await loadHistory();
 }

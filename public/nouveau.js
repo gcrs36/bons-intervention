@@ -1,4 +1,5 @@
 const form = document.querySelector('#universalForm');
+const companyCards = document.querySelector('#companyCards');
 const typeCards = document.querySelector('#typeCards');
 const variantSelect = document.querySelector('#variantSelect');
 const familyFields = document.querySelector('#familyFields');
@@ -15,11 +16,21 @@ const toast = document.querySelector('#toast');
 const money = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
 
 let schemas;
-let selectedType = 'intervention';
+let selectedCompany = 'gcrs';
+let selectedType = '';
 let dolibarrConfigured = false;
 let searchTimer;
 let rowCounter = 0;
 const signatureState = { client: false, tech: false };
+const companyOrder = ['gcrs', 'dimensions', 'esi', 'abeg', 'arboreal', 'clementz'];
+const companyDescriptions = {
+  gcrs: '15 formulaires terrain, atelier, commerce et frais',
+  dimensions: 'Le bon Dimensions original',
+  esi: 'Visite, intervention et livraison matériel',
+  abeg: 'Intervention technique et visite massicot',
+  arboreal: 'Intervention et visite massicot ARBOREAL',
+  clementz: 'Contrat d’intervention Clementz',
+};
 
 function localDateTimeValue(date = new Date()) {
   const rounded = new Date(date);
@@ -39,8 +50,9 @@ async function initialize() {
     schemas = await typesResponse.json();
     const config = configResponse.ok ? await configResponse.json() : {};
     configureDolibarr(config);
-    renderTypeCards();
-    selectType(new URLSearchParams(location.search).get('type') || 'intervention');
+    const parameters = new URLSearchParams(location.search);
+    renderCompanyCards();
+    selectCompany(parameters.get('societe') || parameters.get('variante') || 'gcrs', parameters.get('type'));
     addItem();
     setupSignatures();
   } catch (error) {
@@ -49,53 +61,160 @@ async function initialize() {
   }
 }
 
+function renderCompanyCards() {
+  companyCards.innerHTML = companyOrder.filter((companyId) => schemas.variants[companyId]).map((companyId) => {
+    const company = schemas.variants[companyId];
+    const count = Object.values(schemas.types).filter((type) => type.variants.includes(companyId)).length;
+    const mark = company.logo
+      ? `<span class="company-card-logo"><img src="${escapeAttr(company.logo)}" alt="Logo ${escapeAttr(company.label)}"></span>`
+      : `<span class="company-card-mark">${escapeHtml(company.label.slice(0, 3))}</span>`;
+    return `<button class="company-card" type="button" data-company="${escapeAttr(companyId)}" style="--company-color:${escapeAttr(company.color)}">
+      ${mark}
+      <span><strong>${escapeHtml(company.label)}</strong><small>${escapeHtml(companyDescriptions[companyId] || `${count} formulaire(s) disponible(s)`)}</small><em>${count} bon${count > 1 ? 's' : ''}</em></span>
+    </button>`;
+  }).join('');
+}
+
+function selectCompany(companyId, preferredType) {
+  selectedCompany = schemas.variants[companyId] ? companyId : 'gcrs';
+  [...companyCards.querySelectorAll('.company-card')].forEach((card) => card.classList.toggle('selected', card.dataset.company === selectedCompany));
+  document.querySelector('#selectedCompanyLabel').textContent = schemas.variants[selectedCompany].label;
+  renderTypeCards();
+  const availableTypes = Object.values(schemas.types).filter((type) => type.variants.includes(selectedCompany));
+  const requested = availableTypes.some((type) => type.id === preferredType) ? preferredType : availableTypes[0].id;
+  selectType(requested);
+}
+
 function renderTypeCards() {
-  typeCards.innerHTML = Object.values(schemas.types).map((type) => `
+  typeCards.innerHTML = Object.values(schemas.types).filter((type) => type.variants.includes(selectedCompany)).map((type) => `
     <button class="type-card" type="button" data-type="${escapeAttr(type.id)}">
-      <span class="type-card-icon">${typeIcon(type.id)}</span>
-      <span><strong>${escapeHtml(type.label)}</strong><small>${escapeHtml(type.description)}</small></span>
+      <span class="type-card-icon">${typeIcon(type.family)}</span>
+      <span><strong>${escapeHtml(type.label)}</strong><small>${escapeHtml(type.description)}</small><em>PDF ${escapeHtml(schemas.variants[selectedCompany].label)}</em></span>
     </button>`).join('');
 }
 
 function selectType(typeId) {
-  const definition = schemas.types[typeId] || schemas.types.intervention;
+  const definition = schemas.types[typeId]?.variants.includes(selectedCompany)
+    ? schemas.types[typeId]
+    : Object.values(schemas.types).find((type) => type.variants.includes(selectedCompany));
   selectedType = definition.id;
   document.querySelector('#bonTypeInput').value = definition.id;
   [...typeCards.querySelectorAll('.type-card')].forEach((card) => card.classList.toggle('selected', card.dataset.type === definition.id));
-  variantSelect.innerHTML = definition.variants.map((variantId) => `<option value="${variantId}">${escapeHtml(schemas.variants[variantId].label)}</option>`).join('');
-  const requestedVariant = new URLSearchParams(location.search).get('variante');
-  variantSelect.value = definition.variants.includes(requestedVariant) ? requestedVariant : definition.variants[0];
-  document.querySelector('#pageTitle').textContent = definition.label;
-  document.querySelector('#pageLead').textContent = definition.description;
+  variantSelect.innerHTML = `<option value="${escapeAttr(selectedCompany)}">${escapeHtml(schemas.variants[selectedCompany].label)}</option>`;
+  variantSelect.value = selectedCompany;
+  document.querySelector('#pageTitle').textContent = `${schemas.variants[selectedCompany].label} — ${definition.label}`;
+  document.querySelector('#pageLead').textContent = `Formulaire ${schemas.variants[selectedCompany].label} : les champs saisis déterminent la mise en page du PDF choisi.`;
   document.querySelector('#summaryType').textContent = definition.label;
   document.querySelector('#syncInput').checked = Boolean(definition.syncDefault && dolibarrConfigured);
+  const url = new URL(window.location.href);
+  url.searchParams.set('societe', selectedCompany);
+  url.searchParams.set('type', definition.id);
+  url.searchParams.delete('variante');
+  window.history.replaceState({}, '', url);
   updateVariant();
 }
 
 function updateVariant() {
   const definition = schemas.types[selectedType];
   const variant = schemas.variants[variantSelect.value];
+  const family = definition.family || definition.id;
+  const hasClientSignature = definition.fields?.some((sourceField) => /fa-gavel/.test(sourceField.icon || '')) && family !== 'fiche_machine';
   document.querySelector('#bonVariantInput').value = variant.id;
   document.querySelector('#summaryVariant').textContent = variant.label;
   document.querySelector('.summary-head').style.background = variant.color;
-  document.querySelector('#itemsCard').hidden = selectedType === 'fiche_machine';
-  document.querySelector('#machineInput').required = ['intervention', 'visite_massicot'].includes(selectedType);
+  const hasPartsTable = ['intervention', 'livraison', 'commande', 'devis', 'contrat'].includes(family)
+    || definition.fields?.some((sourceField) => /fa-table/.test(sourceField.icon || '') && /pi[eè]ce|fourniture|mat[eé]riel|prestation/i.test(sourceField.label));
+  document.querySelector('#itemsCard').hidden = !hasPartsTable;
+  document.querySelector('#machineInput').required = ['intervention', 'visite_massicot', 'livraison'].includes(family);
   document.querySelector('#machineRequired').hidden = !document.querySelector('#machineInput').required;
-  const signatureRequired = selectedType !== 'fiche_machine';
+  const signatureRequired = Boolean(hasClientSignature);
   document.querySelector('#signatoryInput').required = signatureRequired;
   document.querySelector('#signatoryRequired').hidden = !signatureRequired;
-  document.querySelector('#agreementRow').hidden = selectedType !== 'intervention';
-  document.querySelector('#agreementInput').required = selectedType === 'intervention';
-  document.querySelector('#technicianLabel').textContent = selectedType === 'mise_en_service' ? 'Formateur *' : 'Technicien *';
+  const agreementRequired = family === 'intervention' && definition.fields?.some((sourceField) => sourceField.id === 'bon_pour_accord');
+  document.querySelector('#agreementRow').hidden = !agreementRequired;
+  document.querySelector('#agreementInput').required = Boolean(agreementRequired);
+  document.querySelector('#technicianLabel').textContent = family === 'mise_en_service' ? 'Formateur *' : 'Technicien *';
+  document.querySelector('#signatureHint').textContent = signatureRequired ? 'Signature client requise par le formulaire Kizeo.' : 'Signature client facultative pour ce formulaire.';
+  document.querySelector('#signatureHint').style.color = '';
   renderFamilyFields(definition, variant);
 }
 
 function renderFamilyFields(definition, variant) {
-  if (definition.id === 'intervention') familyFields.innerHTML = interventionFields(variant.id);
-  if (definition.id === 'visite_massicot') familyFields.innerHTML = massicotFields(definition.checklist);
-  if (definition.id === 'mise_en_service') familyFields.innerHTML = commissioningFields();
-  if (definition.id === 'fiche_machine') familyFields.innerHTML = machineSheetFields();
+  familyFields.innerHTML = kizeoSourceFields(definition, variant);
   bindFamilyEvents();
+}
+
+const CORE_SOURCE_FIELDS = new Set([
+  'date_et_heure1', 'date', 'client', 'client_s_', 'client2', 'adresse', 'adresse_client', 'tel_', 'tel', 'mail',
+  'ref_cde_client', 'type_materiel_', 'n_de_matricule_', 'non_du_technicien', 'nom_du_signataire_', 'nom_du_signataire',
+  'signature1', 'signature2', 'signature3', 'signature_client', 'signature_technicien', 'photo', 'photo1', 'photo2', 'photos',
+]);
+
+function kizeoSourceFields(definition, variant) {
+  const sourceFields = Array.isArray(definition.fields) ? definition.fields : [];
+  const controls = [];
+  for (let index = 0; index < sourceFields.length; index += 1) {
+    const sourceField = sourceFields[index];
+    const icon = sourceField.icon || '';
+    if (/fa-file-image|fa-photo|fa-gavel/.test(icon) || CORE_SOURCE_FIELDS.has(sourceField.id)) continue;
+    if (/fa-bookmark/.test(icon)) {
+      controls.push(`<div class="span-2 kizeo-section-heading"><span>${escapeHtml(sourceField.label)}</span></div>`);
+      continue;
+    }
+    if (/fa-table/.test(icon)) {
+      const columns = [];
+      let cursor = index + 1;
+      while (cursor < sourceFields.length && !/fa-bookmark|fa-table/.test(sourceFields[cursor].icon || '')) {
+        const column = sourceFields[cursor];
+        if (!/fa-photo|fa-gavel|fa-file-image/.test(column.icon || '')) columns.push(column);
+        cursor += 1;
+      }
+      if (/pi[eè]ce|fourniture|mat[eé]riel/i.test(sourceField.label)) {
+        controls.push(`<div class="span-2 source-table-link"><strong>${escapeHtml(sourceField.label)}</strong><span>Le tableau dynamique correspondant se trouve dans « Pièces et fournitures » ci-dessous.</span></div>`);
+      } else {
+        controls.push(kizeoTable(sourceField, columns.slice(0, 8)));
+      }
+      index = cursor - 1;
+      continue;
+    }
+    controls.push(kizeoControl(sourceField));
+  }
+  return `<section class="form-card kizeo-source-form" style="--company-color:${escapeAttr(variant.color)}">
+    <div class="form-card-head"><span class="form-card-number">5</span><div><h2>${escapeHtml(definition.label)}</h2><p class="section-help">Structure reprise du formulaire Kizeo n° ${escapeHtml(definition.kizeoId)} · ${sourceFields.length} champs dans l’ordre d’origine.</p></div></div>
+    <div class="source-form-note"><img src="${escapeAttr(variant.logo || '/logo-gcrs.png')}" alt=""><span>Modèle ${escapeHtml(variant.label)} · les zones de texte et les tableaux grandissent avec leur contenu.</span></div>
+    <div class="form-card-body form-grid">${controls.join('')}</div>
+  </section>`;
+}
+
+function kizeoControl(sourceField) {
+  const icon = sourceField.icon || '';
+  const required = sourceField.required ? ' data-kizeo-required="1"' : '';
+  const label = `${escapeHtml(sourceField.label)}${sourceField.required ? ' *' : ''}`;
+  const workField = /travail effectue|travail effectué|details de l.intervention|détails de l.intervention/i.test(sourceField.label);
+  if (/fa-square-check/.test(icon)) return `<label class="checkbox compact-check"><input data-extra="${escapeAttr(sourceField.id)}" type="checkbox" value="1"><span>${label}</span></label>`;
+  if (/fa-circle-check/.test(icon)) {
+    const knownChoices = {
+      bon_de: ['Dépannage', 'Entretien', 'Installation', 'Formation', 'Mise en service', 'Visite'],
+      nombre_de_passage: ['1', '2', '3', '4 et plus'],
+      nombre_passage: ['1', '2', '3', '4 et plus'],
+      types_d_intervention: ['Curatif', 'Préventif', 'Installation', 'Formation', 'Diagnostic'],
+    }[sourceField.id] || ['Oui', 'Non', 'Non applicable', 'Autre'];
+    const listId = `choices-${sourceField.id}`;
+    return `<div class="field"><label>${label}</label><input data-extra="${escapeAttr(sourceField.id)}"${sourceField.id === 'bon_de' ? ' name="bon_de"' : ''} type="text" list="${escapeAttr(listId)}" placeholder="Choisir ou saisir…"${required}><datalist id="${escapeAttr(listId)}">${knownChoices.map((choice) => `<option value="${escapeAttr(choice)}"></option>`).join('')}</datalist></div>`;
+  }
+  if (/fa-calendar/.test(icon)) return `<div class="field"><label>${label}</label><input data-extra="${escapeAttr(sourceField.id)}" type="datetime-local" step="300"${required}></div>`;
+  if (/fa-align-left|fa-house/.test(icon) || workField) return `<div class="field span-2"><label>${label}</label><textarea data-extra="${escapeAttr(sourceField.id)}"${workField ? ' name="travail_effectue"' : ''} rows="3"${required}></textarea></div>`;
+  const type = /calculator|square-plus/.test(icon) ? 'number' : 'text';
+  return `<div class="field"><label>${label}</label><input data-extra="${escapeAttr(sourceField.id)}" type="${type}"${type === 'number' ? ' step="0.01"' : ''}${required}></div>`;
+}
+
+function kizeoTable(sourceField, columns) {
+  const safeColumns = columns.length ? columns : [{ id: 'ligne', label: 'Ligne' }];
+  return `<div class="span-2 kizeo-table" data-kizeo-table="${escapeAttr(sourceField.id)}">
+    <div class="kizeo-table-head"><div><strong>${escapeHtml(sourceField.label)}</strong><small>Tableau dynamique du formulaire Kizeo</small></div><button class="btn btn-secondary btn-small add-kizeo-row" type="button">＋ Ajouter une ligne</button></div>
+    <div class="kizeo-table-columns" style="--kizeo-columns:${safeColumns.length}">${safeColumns.map((column) => `<span>${escapeHtml(column.label)}</span>`).join('')}</div>
+    <div class="kizeo-table-rows" data-columns='${escapeAttr(JSON.stringify(safeColumns.map(({ id, label }) => ({ id, label }))))}'></div>
+  </div>`;
 }
 
 function interventionFields(variant) {
@@ -108,7 +227,7 @@ function interventionFields(variant) {
     esi: field('Références ESI', 'reference_esi') + field('Demande de', 'demande_de'),
   }[variant] || '';
   return `<section class="form-card">
-    <div class="form-card-head"><span class="form-card-number">4</span><div><h2>Rapport d’intervention</h2><p class="section-help">Motif, travail réalisé, temps et frais.</p></div></div>
+    <div class="form-card-head"><span class="form-card-number">5</span><div><h2>Bon d’intervention ${escapeHtml(schemas.variants[variant].label)}</h2><p class="section-help">Les champs correspondent au modèle PDF ${escapeHtml(schemas.variants[variant].label)}.</p></div></div>
     <div class="form-card-body form-grid">
       ${selectNamedField('Bon de *', 'bon_de', ['Dépannage', 'Entretien', 'Installation', 'Formation', 'Mise en service', 'Visite'], true)}
       ${selectField("Type d’intervention", 'intervention_type', ['', 'Curatif', 'Préventif', 'Installation', 'Formation', 'Diagnostic'])}
@@ -162,7 +281,7 @@ function massicotFields(checklist) {
       <input class="check-comment" type="text" aria-label="Observation ${escapeAttr(item.code)}" placeholder="Observation si nécessaire">
     </div>`).join('');
   return `<section class="form-card">
-    <div class="form-card-head"><span class="form-card-number">4</span><div><h2>Visite trimestrielle massicot</h2><p class="section-help">La grille reprend tous les points A1 à D38 de Kizeo.</p></div></div>
+    <div class="form-card-head"><span class="form-card-number">5</span><div><h2>Visite trimestrielle massicot ${escapeHtml(schemas.variants[selectedCompany].label)}</h2><p class="section-help">Le formulaire et le PDF reprennent les 42 points A1 à D38 de ce bon.</p></div></div>
     <div class="form-card-body form-grid">
       ${selectField('Trimestre *', 'trimestre', ['1er trimestre', '2e trimestre', '3e trimestre', '4e trimestre'], false, true)}
       ${field('N° identification', 'numero_identification')}
@@ -185,7 +304,7 @@ function massicotFields(checklist) {
 }
 
 function commissioningFields() {
-  return `<section class="form-card"><div class="form-card-head"><span class="form-card-number">4</span><div><h2>Mise en service et formation</h2><p class="section-help">Procès-verbal issu du formulaire Kizeo.</p></div></div><div class="form-card-body form-grid">
+  return `<section class="form-card"><div class="form-card-head"><span class="form-card-number">5</span><div><h2>Mise en service et formation GCRS</h2><p class="section-help">Le formulaire reprend le procès-verbal GCRS issu de Kizeo.</p></div></div><div class="form-card-body form-grid">
     ${field('Contact', 'contact')}${field('Supports de formation', 'supports_formation')}
     ${field('Liste / intitulé de formation', 'liste_formation')}
     ${field('Numéros de série', 'numeros_serie', 'textarea', true)}
@@ -195,7 +314,7 @@ function commissioningFields() {
 }
 
 function machineSheetFields() {
-  return `<section class="form-card"><div class="form-card-head"><span class="form-card-number">4</span><div><h2>Fiche machine atelier</h2><p class="section-help">Réception, diagnostic et décision atelier.</p></div></div><div class="form-card-body form-grid">
+  return `<section class="form-card"><div class="form-card-head"><span class="form-card-number">5</span><div><h2>Fiche machine atelier GCRS</h2><p class="section-help">Réception, diagnostic et décision atelier au format GCRS.</p></div></div><div class="form-card-body form-grid">
     ${field('Provenance', 'provenance')}${selectField('But', 'but', ['', 'Diagnostic', 'Réparation', 'Contrôle', 'Préparation', 'Autre'])}
     ${field('Compteur', 'compteur', 'number')}${selectField('Issue', 'issue', ['', 'Réparée', 'À suivre', 'Non réparée', 'Retour client'])}
     ${selectField('Devis', 'devis', ['', 'À faire', 'Envoyé', 'Accepté', 'Refusé', 'Sans objet'])}
@@ -236,6 +355,22 @@ function bindFamilyEvents() {
     arrival.addEventListener('change', updateDuration);
     departure.addEventListener('change', updateDuration);
   }
+  document.querySelectorAll('.kizeo-table').forEach((table) => addKizeoRow(table));
+  document.querySelectorAll('.add-kizeo-row').forEach((button) => button.addEventListener('click', () => addKizeoRow(button.closest('.kizeo-table'))));
+}
+
+function addKizeoRow(table) {
+  const container = table.querySelector('.kizeo-table-rows');
+  const columns = JSON.parse(container.dataset.columns || '[]');
+  const row = document.createElement('div');
+  row.className = 'kizeo-table-row';
+  row.style.setProperty('--kizeo-columns', columns.length);
+  row.innerHTML = `${columns.map((column) => `<input data-column="${escapeAttr(column.id)}" aria-label="${escapeAttr(column.label)}" placeholder="${escapeAttr(column.label)}">`).join('')}<button class="icon-btn remove-kizeo-row" type="button" aria-label="Supprimer la ligne">×</button>`;
+  row.querySelector('.remove-kizeo-row').addEventListener('click', () => {
+    row.remove();
+    if (!container.children.length) addKizeoRow(table);
+  });
+  container.appendChild(row);
 }
 
 function updateDuration() {
@@ -250,6 +385,10 @@ function updateDuration() {
   duration.value = `${String(Math.floor(minutes / 60)).padStart(2, '0')}h${String(minutes % 60).padStart(2, '0')}`;
 }
 
+companyCards.addEventListener('click', (event) => {
+  const card = event.target.closest('[data-company]');
+  if (card) selectCompany(card.dataset.company);
+});
 typeCards.addEventListener('click', (event) => {
   const card = event.target.closest('[data-type]');
   if (card) selectType(card.dataset.type);
@@ -384,6 +523,11 @@ async function collectExtra() {
   document.querySelectorAll('[data-extra]').forEach((input) => {
     fields[input.dataset.extra] = input.type === 'checkbox' ? (input.checked ? '1' : '') : input.value.trim();
   });
+  document.querySelectorAll('.kizeo-table').forEach((table) => {
+    const rows = [...table.querySelectorAll('.kizeo-table-row')].map((row) => Object.fromEntries([...row.querySelectorAll('[data-column]')].map((input) => [input.dataset.column, input.value.trim()])))
+      .filter((row) => Object.values(row).some(Boolean));
+    fields[table.dataset.kizeoTable] = JSON.stringify(rows);
+  });
   const checklist = [...document.querySelectorAll('.check-row')].map((row) => ({
     group: row.dataset.group, groupLabel: row.dataset.groupLabel, code: row.dataset.code, label: row.dataset.label,
     state: row.querySelector('.check-state').value, comment: row.querySelector('.check-comment').value.trim(),
@@ -429,7 +573,10 @@ form.addEventListener('submit', async (event) => {
   event.preventDefault();
   updateItems();
   if (!form.reportValidity()) return;
-  if (selectedType !== 'fiche_machine' && !signatureState.client) {
+  const definition = schemas.types[selectedType];
+  const family = definition.family || definition.id;
+  const signatureRequired = family !== 'fiche_machine' && definition.fields?.some((sourceField) => /fa-gavel/.test(sourceField.icon || ''));
+  if (signatureRequired && !signatureState.client) {
     document.querySelector('#signatureHint').textContent = 'La signature du client est obligatoire pour ce document.';
     document.querySelector('#signatureHint').style.color = '#b43f44';
     document.querySelector('#signatureClientCanvas').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -509,7 +656,7 @@ function showToast(message, error = false) {
   toast.textContent = message; toast.className = `toast show${error ? ' error' : ''}`;
   setTimeout(() => { toast.className = 'toast'; }, 6000);
 }
-function typeIcon(type) { return ({ intervention: 'BI', visite_massicot: 'VT', mise_en_service: 'MES', fiche_machine: 'FM' })[type] || 'DOC'; }
+function typeIcon(type) { return ({ intervention: 'BI', visite_massicot: 'VT', mise_en_service: 'MES', fiche_machine: 'FM', livraison: 'BL', commande: 'BC', devis: 'DEV', contrat: 'CTR', note_frais: 'NDF', indemnity: 'IK', reprise_depot: 'REP', affutage: 'AFF' })[type] || 'DOC'; }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char])); }
 function escapeAttr(value) { return escapeHtml(value).replace(/`/g, '&#96;'); }
 

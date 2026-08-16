@@ -18,9 +18,13 @@ function syncBadge(state) {
 
 async function loadDashboard() {
   try {
-    const response = await fetch('/api/dashboard');
+    const [response, typesResponse] = await Promise.all([fetch('/api/dashboard'), fetch('/api/bon-types')]);
     if (!response.ok) throw new Error('Tableau de bord indisponible');
     const data = await response.json();
+    if (typesResponse.ok) {
+      const schemas = await typesResponse.json();
+      Object.values(schemas.types || {}).forEach((definition) => { typeLabels[definition.id] = definition.label; });
+    }
     document.querySelector('#statToday').textContent = data.totals.today || 0;
     document.querySelector('#statSigned').textContent = data.totals.signed || 0;
     document.querySelector('#statSynced').textContent = data.totals.synced || 0;

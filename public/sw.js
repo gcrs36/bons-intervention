@@ -3,7 +3,7 @@
 
 importScripts('/offline-store.js');
 
-const CACHE_NAME = 'gcrs-interventions-v4-0-0';
+const CACHE_NAME = 'gcrs-interventions-v4-2-0';
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -20,6 +20,10 @@ const APP_SHELL = [
   '/icon-192.png',
   '/icon-512.png',
   '/logo-gcrs.png',
+  '/logo-abeg.png',
+  '/logo-arboreal.png',
+  '/logo-dimensions.png',
+  '/logo-esi.jpg',
 ];
 
 self.addEventListener('install', (event) => {
