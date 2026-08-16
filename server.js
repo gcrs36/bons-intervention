@@ -367,6 +367,7 @@ async function generatePdf(bon, outputPath) {
     const width = 487.25;
     const logoPath = path.join(publicDir, 'logo-dimensions.png');
     const pt = (inches) => inches * 72;
+    const cm = (centimeters) => (centimeters * 72) / 2.54;
     const cleanText = (value) => String(value ?? '')
       .replace(/\r\n?/g, '\n')
       .replace(/[^\S\n]+/g, ' ')
@@ -486,17 +487,20 @@ async function generatePdf(bon, outputPath) {
       ] },
     ]);
 
-    const signatureY = pt(9.57);
+    const signatureY = pt(7.75);
     const signatureNameHeight = 19;
-    const signatureHeight = pt(0.59) - signatureNameHeight;
     drawCell(left, signatureY, half, signatureNameHeight, `Nom du technicien: ${bon.non_du_technicien || ''}`, { size: 9, padding: 3 });
     drawCell(left + half, signatureY, half, signatureNameHeight, `Nom du signataire: ${bon.nom_du_signataire_ || ''}`, { size: 9, padding: 3 });
-    drawCell(left, signatureY + signatureNameHeight, width, signatureHeight, 'Bon pour accord', { align: 'center', size: 9, padding: 2 });
+    const signatureWidth = cm(5);
+    const signatureHeight = cm(4);
+    const signatureX = left + half + ((half - signatureWidth) / 2);
+    const signatureBoxY = signatureY + signatureNameHeight + 6;
+    drawCell(signatureX, signatureBoxY, signatureWidth, signatureHeight, 'Bon pour accord', { align: 'center', size: 9, padding: 4 });
     if (bon.signature) {
       try {
         const signatureBuffer = Buffer.from(String(bon.signature).split(',')[1], 'base64');
-        doc.image(signatureBuffer, left + 8, signatureY + signatureNameHeight + 10, {
-          fit: [width - 16, Math.max(signatureHeight - 12, 6)], align: 'center', valign: 'center',
+        doc.image(signatureBuffer, signatureX + 6, signatureBoxY + 18, {
+          fit: [signatureWidth - 12, signatureHeight - 24], align: 'center', valign: 'center',
         });
       } catch { /* La présence du libellé conserve la zone si l'image est illisible. */ }
     }
