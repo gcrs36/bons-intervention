@@ -4,7 +4,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { DatabaseSync } = require('node:sqlite');
 const ExcelJS = require('exceljs');
-const puppeteer = require('puppeteer');
+const PDFDocument = require('pdfkit');
 const { DolibarrClient, DolibarrError, buildDolibarrFlow } = require('./lib/dolibarr');
 
 const app = express();
@@ -173,7 +173,14 @@ app.post('/api/create-intervention-dimensions', async (req, res) => {
 
     const pdfFilename = `${publicRef}.pdf`;
     const pdfPath = path.join(pdfDir, pdfFilename);
-    await generatePdf({ ...payload, id, public_ref: publicRef }, pdfPath);
+    try {
+      await generatePdf({ ...payload, id, public_ref: publicRef }, pdfPath);
+    } catch (error) {
+      await dbRun('DELETE FROM bon_items WHERE bon_id = ?', [id]);
+      await dbRun('DELETE FROM bons WHERE id = ?', [id]);
+      if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
+      throw error;
+    }
     await dbRun('UPDATE bons SET pdf_filename = ?, pdf_url = ?, updated_at = datetime(\'now\') WHERE id = ?', [
       pdfFilename, `/api/bons/${id}/pdf`, id,
     ]);
@@ -341,40 +348,178 @@ async function syncBonToDolibarr(id) {
 }
 
 async function generatePdf(bon, outputPath) {
-  let template = fs.readFileSync(path.join(rootDir, 'modele.html'), 'utf8');
-  const logoPath = path.join(publicDir, 'logo-enquete.png');
-  const logo = fs.existsSync(logoPath) ? `data:image/png;base64,${fs.readFileSync(logoPath).toString('base64')}` : '';
-  const items = bon.items || [];
-  const totalHt = items.reduce((sum, item) => sum + item.line_total, 0);
-  const rows = items.length ? items.map((item) => `<tr>
-    <td>${escapeHtml(item.code)}</td><td>${escapeHtml(item.designation)}</td>
-    <td class="number">${money(item.unit_price)}</td><td class="number">${number(item.quantity)}</td>
-    <td class="number">${money(item.line_total)}</td></tr>`).join('') :
-    '<tr><td colspan="5" class="empty-state">Aucune pièce ou fourniture déclarée</td></tr>';
+  await new Promise((resolve, reject) => {
+    const doc = new PDFDocument({
+      size: 'A4', margins: { top: 36, right: 36, bottom: 42, left: 36 }, bufferPages: true,
+      info: { Title: `Bon d'intervention ${bon.public_ref}`, Author: 'GCRS Interventions' },
+    });
+    const output = fs.createWriteStream(outputPath);
+    output.on('finish', resolve);
+    output.on('error', reject);
+    doc.on('error', reject);
+    doc.pipe(output);
 
-  const replacements = {
-    logo_img: logo, public_ref: bon.public_ref, bon_de: bon.bon_de, date_et_heure1: formatDateTime(bon.date_et_heure1),
-    client: bon.client, ref_cde_client: bon.ref_cde_client, adresse: nl2br(bon.adresse), tel_: bon.tel_, mail: bon.mail,
-    type_materiel_: bon.type_materiel_, n_de_matricule_: bon.n_de_matricule_, travail_effectue: nl2br(bon.travail_effectue),
-    temps_passe: bon.temps_passe, non_du_technicien: bon.non_du_technicien, nom_du_signataire_: bon.nom_du_signataire_,
-    heures_d_arrivee: bon.heures_d_arrivee, heure_depart: bon.heure_depart, repas: number(bon.repas), km: number(bon.km),
-    hotel: number(bon.hotel), autoroute: money(bon.autoroute), deplacement: bon.deplacement, items_rows: rows,
-    total_ht: money(totalHt), signature_img: bon.signature ? `<img src="${bon.signature}" alt="Signature client">` : '',
-  };
-  for (const [key, rawValue] of Object.entries(replacements)) {
-    const htmlKeys = new Set(['logo_img', 'adresse', 'travail_effectue', 'items_rows', 'signature_img']);
-    const value = htmlKeys.has(key) ? String(rawValue || '') : escapeHtml(rawValue || '');
-    template = template.replaceAll(`{{${key}}}`, value);
-  }
+    const navy = '#173b57';
+    const teal = '#008da8';
+    const pale = '#f2f6f8';
+    const border = '#cbd6dc';
+    const ink = '#1e2b33';
+    const muted = '#61717c';
+    const left = doc.page.margins.left;
+    const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const bottom = () => doc.page.height - doc.page.margins.bottom - 48;
+    const logoPath = path.join(publicDir, 'logo-enquete.png');
 
-  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
-  try {
-    const page = await browser.newPage();
-    await page.setContent(template, { waitUntil: 'networkidle0' });
-    await page.pdf({ path: outputPath, format: 'A4', printBackground: true, margin: { top: '12mm', right: '12mm', bottom: '12mm', left: '12mm' } });
-  } finally {
-    await browser.close();
-  }
+    function pageHeader() {
+      const top = doc.page.margins.top;
+      doc.save().roundedRect(left, top, width, 70, 7).fill(navy).restore();
+      if (fs.existsSync(logoPath)) {
+        try {
+          doc.save().roundedRect(left + 10, top + 9, 126, 52, 4).fill('#ffffff').restore();
+          doc.image(logoPath, left + 16, top + 14, { fit: [114, 42], align: 'center', valign: 'center' });
+        } catch { /* Le texte de remplacement reste visible si le logo est illisible. */ }
+      }
+      doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(17)
+        .text("BON D'INTERVENTION", left + 150, top + 16, { width: width - 162, align: 'right' });
+      doc.font('Helvetica').fontSize(9)
+        .text(String(bon.public_ref || ''), left + 150, top + 42, { width: width - 162, align: 'right' });
+      doc.y = top + 82;
+    }
+
+    function ensureSpace(height) {
+      if (doc.y + height <= bottom()) return;
+      doc.addPage();
+      pageHeader();
+    }
+
+    function section(title) {
+      ensureSpace(34);
+      const y = doc.y;
+      doc.save().roundedRect(left, y, width, 22, 3).fill(teal).restore();
+      doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(10).text(title, left + 8, y + 6, { width: width - 16 });
+      doc.y = y + 28;
+    }
+
+    function field(label, value) {
+      const cleanValue = String(value ?? '').trim() || '-';
+      doc.font('Helvetica').fontSize(9);
+      const valueWidth = width - 150;
+      const height = Math.max(30, doc.heightOfString(cleanValue, { width: valueWidth - 16 }) + 14);
+      ensureSpace(height + 2);
+      const y = doc.y;
+      doc.save().roundedRect(left, y, width, height, 3).fillAndStroke(pale, border).restore();
+      doc.fillColor(muted).font('Helvetica-Bold').fontSize(8).text(label.toUpperCase(), left + 8, y + 9, { width: 126 });
+      doc.fillColor(ink).font('Helvetica').fontSize(9).text(cleanValue, left + 142, y + 8, { width: valueWidth - 8 });
+      doc.y = y + height + 3;
+    }
+
+    function textBlock(value) {
+      const cleanValue = String(value ?? '').trim() || '-';
+      doc.font('Helvetica').fontSize(9.5);
+      const height = Math.max(48, doc.heightOfString(cleanValue, { width: width - 20 }) + 20);
+      ensureSpace(height + 2);
+      const y = doc.y;
+      doc.save().roundedRect(left, y, width, height, 3).fillAndStroke('#ffffff', border).restore();
+      doc.fillColor(ink).text(cleanValue, left + 10, y + 10, { width: width - 20, lineGap: 2 });
+      doc.y = y + height + 3;
+    }
+
+    function piecesHeader() {
+      const y = doc.y;
+      const columns = [72, width - 262, 70, 48, 72];
+      let x = left;
+      ['Code', 'Désignation', 'P.U. HT', 'Qté', 'Total HT'].forEach((label, index) => {
+        doc.save().rect(x, y, columns[index], 24).fillAndStroke(navy, '#ffffff').restore();
+        doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8)
+          .text(label, x + 4, y + 8, { width: columns[index] - 8, align: index >= 2 ? 'right' : 'left' });
+        x += columns[index];
+      });
+      doc.y = y + 24;
+    }
+
+    function pieceRow(item) {
+      const columns = [72, width - 262, 70, 48, 72];
+      const values = [item.code || '-', item.designation || 'Pièce', money(item.unit_price), number(item.quantity), money(item.line_total)];
+      doc.font('Helvetica').fontSize(8);
+      const rowHeight = Math.max(25, ...values.map((value, index) => doc.heightOfString(String(value), { width: columns[index] - 8 }) + 12));
+      if (doc.y + rowHeight > bottom()) {
+        doc.addPage();
+        pageHeader();
+        piecesHeader();
+      }
+      const y = doc.y;
+      let x = left;
+      values.forEach((value, index) => {
+        doc.save().rect(x, y, columns[index], rowHeight).fillAndStroke(index % 2 ? '#ffffff' : pale, border).restore();
+        doc.fillColor(ink).font('Helvetica').fontSize(8)
+          .text(String(value), x + 4, y + 7, { width: columns[index] - 8, align: index >= 2 ? 'right' : 'left' });
+        x += columns[index];
+      });
+      doc.y = y + rowHeight;
+    }
+
+    pageHeader();
+    section('Références');
+    field('Référence du bon', bon.public_ref);
+    field('Date et heure', formatDateTime(bon.date_et_heure1));
+    field('Type de bon', bon.bon_de);
+    field('Référence client', bon.ref_cde_client);
+
+    section('Client et matériel');
+    field('Client', bon.client);
+    field('Adresse', bon.adresse);
+    field('Téléphone', bon.tel_);
+    field('E-mail', bon.mail);
+    field('Matériel', bon.type_materiel_);
+    field('Matricule / série', bon.n_de_matricule_);
+
+    section('Intervention');
+    field('Technicien', bon.non_du_technicien);
+    field('Horaires', `${bon.heures_d_arrivee || '-'} - ${bon.heure_depart || '-'} - Temps passé : ${bon.temps_passe || '-'}`);
+    field('Déplacement', `${bon.deplacement || '-'} - ${number(bon.km)} km - Repas : ${number(bon.repas)} - Hôtel : ${number(bon.hotel)} - Autoroute : ${money(bon.autoroute)}`);
+    section('Travail effectué');
+    textBlock(bon.travail_effectue);
+
+    const items = Array.isArray(bon.items) ? bon.items : [];
+    ensureSpace(items.length ? 90 : 82);
+    section('Pièces et fournitures');
+    if (items.length) {
+      piecesHeader();
+      items.forEach(pieceRow);
+      const totalHt = items.reduce((sum, item) => sum + (Number(item.line_total) || 0), 0);
+      ensureSpace(44);
+      const totalY = doc.y + 8;
+      doc.fillColor(navy).font('Helvetica-Bold').fontSize(10)
+        .text(`Total HT : ${money(totalHt)}`, left, totalY, { width, align: 'right' });
+      doc.y = totalY + 24;
+    } else {
+      textBlock('Aucune pièce ou fourniture déclarée.');
+    }
+
+    section('Accord et signature du client');
+    field('Signataire', bon.nom_du_signataire_);
+    ensureSpace(120);
+    const signatureY = doc.y;
+    doc.save().roundedRect(left, signatureY, width, 105, 3).fillAndStroke('#ffffff', border).restore();
+    doc.fillColor(muted).font('Helvetica-Bold').fontSize(8).text('BON POUR ACCORD - SIGNATURE', left + 10, signatureY + 9);
+    if (bon.signature) {
+      try {
+        const signatureBuffer = Buffer.from(String(bon.signature).split(',')[1], 'base64');
+        doc.image(signatureBuffer, left + 12, signatureY + 25, { fit: [width - 24, 68], align: 'center', valign: 'center' });
+      } catch {
+        doc.fillColor(muted).font('Helvetica-Oblique').fontSize(9).text('Signature enregistrée', left + 12, signatureY + 50, { width: width - 24, align: 'center' });
+      }
+    }
+    doc.y = signatureY + 112;
+
+    const range = doc.bufferedPageRange();
+    for (let index = range.start; index < range.start + range.count; index += 1) {
+      doc.switchToPage(index);
+      doc.fillColor(muted).font('Helvetica').fontSize(7.5)
+        .text(`GCRS Interventions - ${bon.public_ref} - Page ${index + 1}/${range.count}`, left, doc.page.height - doc.page.margins.bottom - 28, { width, align: 'center', lineBreak: false });
+    }
+    doc.end();
+  });
 }
 
 function normalizeBonPayload(body) {
