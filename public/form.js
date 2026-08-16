@@ -167,15 +167,53 @@ function updateDuration() {
 }
 arrival.addEventListener('change', updateDuration); departure.addEventListener('change', updateDuration);
 
-form.addEventListener('submit', (event) => {
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
   updateItems();
   if (!signatureDrawn) {
-    event.preventDefault(); signatureHint.textContent = 'La signature du client est obligatoire.'; signatureHint.style.color = '#b43f44';
+    signatureHint.textContent = 'La signature du client est obligatoire.'; signatureHint.style.color = '#b43f44';
     signatureCanvas.scrollIntoView({ behavior: 'smooth', block: 'center' }); return;
   }
   signatureInput.value = signatureCanvas.toDataURL('image/png');
-  const button = document.querySelector('#submitButton'); button.disabled = true; button.textContent = 'Génération du PDF…';
+  const button = document.querySelector('#submitButton');
+  button.disabled = true;
+  button.textContent = 'Génération du PDF…';
+
+  try {
+    const response = await fetch(form.action, {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+      body: new URLSearchParams(new FormData(form)),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Impossible d’enregistrer le bon.');
+
+    const download = document.createElement('a');
+    download.href = `/api/bons/${result.id}/pdf?download=1`;
+    download.download = `${result.publicRef}.pdf`;
+    download.hidden = true;
+    document.body.appendChild(download);
+    download.click();
+    download.remove();
+
+    const syncWarning = result.sync && result.sync.ok === false
+      ? ' Le bon est enregistré, mais la synchronisation Dolibarr devra être relancée depuis l’historique.'
+      : '';
+    showToast(`Bon ${result.publicRef} enregistré. Le téléchargement du PDF démarre.${syncWarning}`, Boolean(syncWarning));
+    button.textContent = 'Bon enregistré';
+    setTimeout(() => { window.location.href = `/historique.html?created=${result.id}`; }, 1800);
+  } catch (error) {
+    showToast(error.message || 'Impossible d’enregistrer le bon.', true);
+    button.disabled = false;
+    button.textContent = 'Enregistrer le bon signé';
+  }
 });
+
+function showToast(message, error = false) {
+  toast.textContent = message;
+  toast.className = `toast show${error ? ' error' : ''}`;
+  setTimeout(() => { toast.className = 'toast'; }, 6000);
+}
 
 async function configure() {
   try {
