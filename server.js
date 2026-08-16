@@ -6,6 +6,8 @@ const { DatabaseSync } = require('node:sqlite');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 const { DolibarrClient, DolibarrError, buildDolibarrFlow } = require('./lib/dolibarr');
+const { BON_TYPES, publicBonTypes, getBonType } = require('./lib/bon-types');
+const { generateGenericPdf } = require('./lib/pdf-generic');
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
@@ -58,6 +60,8 @@ app.get('/api/config', (_req, res) => {
   });
 });
 
+app.get('/api/bon-types', (_req, res) => res.json(publicBonTypes()));
+
 app.get('/api/dashboard', async (_req, res) => {
   const [totals, recent] = await Promise.all([
     dbGet(`SELECT
@@ -67,7 +71,7 @@ app.get('/api/dashboard', async (_req, res) => {
       SUM(CASE WHEN sync_state = 'error' THEN 1 ELSE 0 END) AS sync_errors,
       SUM(CASE WHEN date(date_et_heure1) = date('now', 'localtime') THEN 1 ELSE 0 END) AS today
       FROM bons`),
-    dbAll(`SELECT id, public_ref, date_et_heure1, client, bon_de, status, sync_state,
+    dbAll(`SELECT id, public_ref, date_et_heure1, client, bon_de, bon_type, bon_variant, status, sync_state,
       dolibarr_intervention_id, dolibarr_order_id, dolibarr_invoice_id
       FROM bons ORDER BY id DESC LIMIT 6`),
   ]);
@@ -206,6 +210,76 @@ app.post('/api/create-intervention-dimensions', async (req, res) => {
   }
 });
 
+app.post('/api/create-bon', async (req, res) => {
+  try {
+    const payload = normalizeGenericPayload(req.body);
+    validateGenericPayload(payload);
+
+    const result = await dbRun(`INSERT INTO bons (
+      date_et_heure1, ref_cde_client, bon_de, client, tel_, adresse, mail,
+      type_materiel_, n_de_matricule_, travail_effectue, temps_passe,
+      non_du_technicien, nom_du_signataire_, status, sync_state,
+      heures_d_arrivee, heure_depart, repas, km, hotel, autoroute, deplacement,
+      dolibarr_thirdparty_id, bon_type, bon_variant, extra_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'signed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`, [
+      payload.date_et_heure1, payload.ref_cde_client, payload.bon_de, payload.client,
+      payload.tel_, payload.adresse, payload.mail, payload.type_materiel_,
+      payload.n_de_matricule_, payload.travail_effectue, payload.temps_passe,
+      payload.non_du_technicien, payload.nom_du_signataire_,
+      dolibarr.isConfigured() ? 'pending' : 'not_configured', payload.heures_d_arrivee,
+      payload.heure_depart, payload.repas, payload.km, payload.hotel, payload.autoroute,
+      payload.deplacement, payload.dolibarr_thirdparty_id, payload.bon_type,
+      payload.bon_variant, JSON.stringify(payload.extra),
+    ]);
+
+    const id = result.lastID;
+    const publicRef = buildPublicRef(id, payload.date_et_heure1, payload.bon_type);
+    await dbRun('UPDATE bons SET public_ref = ? WHERE id = ?', [publicRef, id]);
+    for (const [index, item] of payload.items.entries()) {
+      await dbRun(`INSERT INTO bon_items
+        (bon_id, position, product_id, code, designation, unit_price, quantity, vat_rate, line_total)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+        id, index + 1, item.product_id || null, item.code, item.designation,
+        item.unit_price, item.quantity, item.vat_rate, item.line_total,
+      ]);
+    }
+
+    const pdfFilename = `${publicRef}.pdf`;
+    const pdfPath = path.join(pdfDir, pdfFilename);
+    try {
+      if (payload.bon_type === 'intervention' && payload.bon_variant === 'dimensions') {
+        await generatePdf({ ...payload, id, public_ref: publicRef }, pdfPath);
+      } else {
+        await generateGenericPdf({ ...payload, id, public_ref: publicRef }, pdfPath);
+      }
+    } catch (error) {
+      await dbRun('DELETE FROM bon_items WHERE bon_id = ?', [id]);
+      await dbRun('DELETE FROM bons WHERE id = ?', [id]);
+      if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
+      throw error;
+    }
+    await dbRun('UPDATE bons SET pdf_filename = ?, pdf_url = ?, updated_at = datetime(\'now\') WHERE id = ?', [
+      pdfFilename, `/api/bons/${id}/pdf`, id,
+    ]);
+
+    let sync = null;
+    if (dolibarr.isConfigured() && String(req.body.sync_dolibarr ?? (payload.definition.syncDefault ? '1' : '0')) !== '0') {
+      try {
+        sync = await syncBonToDolibarr(id);
+      } catch (error) {
+        sync = { ok: false, error: safeError(error) };
+      }
+    }
+
+    if (wantsJson(req)) return res.status(201).json({ ok: true, id, publicRef, sync });
+    res.redirect(`/historique.html?created=${id}`);
+  } catch (error) {
+    console.error('Création du bon multi-formulaire :', error);
+    if (wantsJson(req)) return res.status(error.status || 400).json({ error: safeError(error) });
+    res.status(error.status || 400).send(`Impossible d'enregistrer le bon : ${escapeHtml(safeError(error))}`);
+  }
+});
+
 app.post('/api/bons/:id/sync-dolibarr', async (req, res) => {
   if (!dolibarr.isConfigured()) {
     return res.status(503).json({ error: 'Configurez DOLIBARR_API_KEY sur Render avant la synchronisation.' });
@@ -226,7 +300,8 @@ app.get('/api/export-excel', async (_req, res) => {
   workbook.creator = 'GCRS Interventions';
   const interventions = workbook.addWorksheet('Interventions');
   interventions.columns = [
-    ['Référence', 'public_ref', 18], ['Date', 'date_et_heure1', 20], ['Client', 'client', 28],
+    ['Référence', 'public_ref', 18], ['Famille', 'bon_type', 20], ['Variante', 'bon_variant', 14],
+    ['Date', 'date_et_heure1', 20], ['Client', 'client', 28],
     ['Type', 'bon_de', 22], ['Matériel', 'type_materiel_', 22], ['Matricule', 'n_de_matricule_', 18],
     ['Technicien', 'non_du_technicien', 22], ['Temps', 'temps_passe', 12], ['Statut', 'status', 14],
     ['Synchronisation', 'sync_state', 18], ['Intervention Dolibarr', 'dolibarr_intervention_id', 20],
@@ -310,7 +385,8 @@ async function initializeDatabase() {
     repas: 'REAL NOT NULL DEFAULT 0', km: 'REAL NOT NULL DEFAULT 0', hotel: 'REAL NOT NULL DEFAULT 0',
     autoroute: 'REAL NOT NULL DEFAULT 0', deplacement: 'TEXT', dolibarr_thirdparty_id: 'INTEGER',
     dolibarr_intervention_id: 'INTEGER', dolibarr_order_id: 'INTEGER', dolibarr_invoice_id: 'INTEGER',
-    dolibarr_pdf_uploaded: 'INTEGER NOT NULL DEFAULT 0', created_at: 'TEXT', updated_at: 'TEXT',
+    dolibarr_pdf_uploaded: 'INTEGER NOT NULL DEFAULT 0', bon_type: "TEXT NOT NULL DEFAULT 'intervention'",
+    bon_variant: "TEXT NOT NULL DEFAULT 'dimensions'", extra_json: 'TEXT', created_at: 'TEXT', updated_at: 'TEXT',
   });
   await dbRun(`UPDATE bons SET public_ref = printf('BI-%05d', id) WHERE public_ref IS NULL OR public_ref = ''`);
   await dbRun(`UPDATE bons SET created_at = COALESCE(created_at, datetime('now')), updated_at = COALESCE(updated_at, datetime('now'))`);
@@ -610,6 +686,79 @@ function normalizeBonPayload(body) {
   };
 }
 
+function normalizeGenericPayload(body) {
+  const definition = getBonType(body.bon_type, body.bon_variant);
+  if (!definition) throw httpError(400, 'Le type ou la variante de document est invalide.');
+  const base = normalizeBonPayload(body);
+  const extra = sanitizeExtraPayload(body.extra_json, body.signature_technicien);
+  const fields = extra.fields || {};
+  const fallbackWork = {
+    visite_massicot: `Visite trimestrielle massicot — ${(extra.checklist || []).filter((row) => row.state && row.state !== 'Non applicable').length} point(s) contrôlé(s).${fields.conformite ? ` Conclusion : ${fields.conformite}.` : ''}`,
+    mise_en_service: clean(fields.observations || 'Mise en service et formation réalisées.', 10000),
+    fiche_machine: clean(fields.action_realisee || fields.observation || 'Fiche machine atelier.', 10000),
+  }[definition.id];
+
+  return {
+    ...base,
+    bon_type: definition.id,
+    bon_variant: definition.variant.id,
+    definition,
+    bon_de: base.bon_de || definition.shortLabel,
+    travail_effectue: base.travail_effectue || fallbackWork || definition.label,
+    signature_technicien: extra.signature_technicien,
+    extra,
+  };
+}
+
+function sanitizeExtraPayload(value, technicianSignature) {
+  const source = String(value || '{}');
+  if (source.length > 9_000_000) throw httpError(413, 'Les pièces jointes sont trop volumineuses.');
+  let parsed;
+  try { parsed = JSON.parse(source); } catch { throw httpError(400, 'Les données complémentaires du bon sont illisibles.'); }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) parsed = {};
+  const fields = {};
+  for (const [key, fieldValue] of Object.entries(parsed.fields || {}).slice(0, 100)) {
+    fields[clean(key, 80)] = clean(fieldValue, 10000);
+  }
+  const checklist = (Array.isArray(parsed.checklist) ? parsed.checklist : []).slice(0, 80).map((row) => ({
+    group: clean(row.group, 4), groupLabel: clean(row.groupLabel, 120), code: clean(row.code, 12),
+    label: clean(row.label, 500), state: clean(row.state, 40), comment: clean(row.comment, 2000),
+  }));
+  const days = (Array.isArray(parsed.days) ? parsed.days : []).slice(0, 5).map((day) => ({
+    date: clean(day.date, 32), on_site: clean(day.on_site, 40), trips: clean(day.trips, 40),
+    outbound: clean(day.outbound, 40), return: clean(day.return, 40), km: clean(day.km, 40),
+    tolls: clean(day.tolls, 40), meals: clean(day.meals, 40), hotel: clean(day.hotel, 40),
+    parking: clean(day.parking, 40), report: clean(day.report, 10000),
+  }));
+  const photos = sanitizePhotos(parsed.photos);
+  const privatePhotos = sanitizePhotos(parsed.privatePhotos);
+  return { fields, checklist, days, photos, privatePhotos, signature_technicien: validSignature(technicianSignature || parsed.signature_technicien) };
+}
+
+function sanitizePhotos(value) {
+  return (Array.isArray(value) ? value : []).slice(0, 6).map((photo, index) => ({
+    name: clean(photo.name || `Photo ${index + 1}`, 120),
+    data: /^data:image\/(?:png|jpe?g);base64,[A-Za-z0-9+/=]+$/i.test(String(photo.data || '')) && String(photo.data).length < 2_000_000 ? String(photo.data) : '',
+  })).filter((photo) => photo.data);
+}
+
+function validateGenericPayload(payload) {
+  const required = [['date_et_heure1', 'La date'], ['client', 'Le client'], ['non_du_technicien', 'Le technicien']];
+  if (payload.bon_type !== 'fiche_machine') required.push(['nom_du_signataire_', 'Le signataire']);
+  if (['intervention', 'visite_massicot'].includes(payload.bon_type)) required.push(['type_materiel_', 'Le matériel ou la machine']);
+  if (payload.bon_type === 'intervention') required.push(['travail_effectue', 'Le travail effectué']);
+  for (const [key, label] of required) if (!payload[key]) throw httpError(400, `${label} est obligatoire.`);
+  if (payload.bon_type === 'visite_massicot' && payload.extra.checklist.length !== 42) {
+    throw httpError(400, 'La checklist massicot doit contenir les 42 points de A1 à D38.');
+  }
+  if (payload.bon_type === 'visite_massicot' && !payload.extra.fields.trimestre) {
+    throw httpError(400, 'Le trimestre de la visite est obligatoire.');
+  }
+  if (payload.bon_type !== 'fiche_machine' && !payload.signature) throw httpError(400, 'La signature du client est obligatoire.');
+  if (payload.bon_type === 'intervention' && !payload.bon_pour_accord) throw httpError(400, "L'accord du client est obligatoire.");
+  if (payload.mail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.mail)) throw httpError(400, "L'adresse e-mail n'est pas valide.");
+}
+
 function validateBonPayload(payload) {
   const required = [['date_et_heure1', 'La date'], ['client', 'Le client'], ['bon_de', 'Le type de bon'],
     ['travail_effectue', 'Le travail effectué'], ['non_du_technicien', 'Le technicien'], ['nom_du_signataire_', 'Le signataire']];
@@ -649,10 +798,11 @@ function resolvePdfPath(bon) {
   return candidates.find((candidate) => fs.existsSync(candidate)) || null;
 }
 
-function buildPublicRef(id, dateValue) {
+function buildPublicRef(id, dateValue, bonType = 'intervention') {
   const date = new Date(dateValue || Date.now());
   const year = Number.isNaN(date.getTime()) ? new Date().getFullYear() : date.getFullYear();
-  return `BI-${year}-${String(id).padStart(5, '0')}`;
+  const prefix = BON_TYPES[bonType]?.prefix || 'BI';
+  return `${prefix}-${year}-${String(id).padStart(5, '0')}`;
 }
 
 function styleWorksheet(sheet) {
@@ -708,4 +858,4 @@ initializeDatabase()
   .then(() => app.listen(PORT, () => console.log(`GCRS Interventions disponible sur le port ${PORT}`)))
   .catch((error) => { console.error('Initialisation impossible :', error); process.exitCode = 1; });
 
-module.exports = { app, db, initializeDatabase, normalizeBonPayload, buildPublicRef };
+module.exports = { app, db, initializeDatabase, normalizeBonPayload, normalizeGenericPayload, buildPublicRef };
