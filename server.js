@@ -1,148 +1,508 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
-const sqlite3 = require('sqlite3').verbose();
+const crypto = require('crypto');
+const { DatabaseSync } = require('node:sqlite');
 const ExcelJS = require('exceljs');
-const puppeteer = require('puppeteer'); // Moteur PDF
+const puppeteer = require('puppeteer');
+const { DolibarrClient, DolibarrError, buildDolibarrFlow } = require('./lib/dolibarr');
+
 const app = express();
+const PORT = Number(process.env.PORT || 10000);
+const rootDir = __dirname;
+const publicDir = path.join(rootDir, 'public');
+const dataDir = path.resolve(process.env.DATA_DIR || rootDir);
+const pdfDir = path.join(dataDir, 'pdfs');
+const dbPath = path.resolve(process.env.DB_PATH || path.join(dataDir, 'database.db'));
 
-const PORT = process.env.PORT || 10000;
+fs.mkdirSync(dataDir, { recursive: true });
+fs.mkdirSync(pdfDir, { recursive: true });
 
-// Création du dossier pour stocker les PDF
-const pdfDir = path.join(__dirname, 'public', 'pdfs');
-if (!fs.existsSync(pdfDir)){
-    fs.mkdirSync(pdfDir, { recursive: true });
+const db = new DatabaseSync(dbPath);
+const dolibarr = new DolibarrClient({
+  baseUrl: process.env.DOLIBARR_URL || 'https://dolibarr.gcrs.fr',
+  apiKey: process.env.DOLIBARR_API_KEY || '',
+  entity: process.env.DOLIBARR_ENTITY || '',
+  vatRate: Number(process.env.DOLIBARR_VAT_RATE || 20),
+});
+
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
+
+app.use(optionalBasicAuth);
+app.use(express.json({ limit: '12mb' }));
+app.use(express.urlencoded({ extended: true, limit: '12mb' }));
+app.use(express.static(publicDir, { index: false }));
+
+app.get('/', (_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
+
+app.get('/api/health', async (_req, res) => {
+  const row = await dbGet('SELECT COUNT(*) AS total FROM bons');
+  res.json({ ok: true, database: 'ok', interventions: row.total, dolibarrConfigured: dolibarr.isConfigured() });
+});
+
+app.get('/api/config', (_req, res) => {
+  res.json({
+    dolibarr: {
+      baseUrl: dolibarr.baseUrl,
+      configured: dolibarr.isConfigured(),
+      flow: ['intervention', 'commande_si_pieces', 'facture_brouillon'],
+    },
+    authenticationEnabled: Boolean(process.env.APP_USER && process.env.APP_PASSWORD),
+  });
+});
+
+app.get('/api/dashboard', async (_req, res) => {
+  const [totals, recent] = await Promise.all([
+    dbGet(`SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN status = 'signed' THEN 1 ELSE 0 END) AS signed,
+      SUM(CASE WHEN sync_state = 'synced' THEN 1 ELSE 0 END) AS synced,
+      SUM(CASE WHEN sync_state = 'error' THEN 1 ELSE 0 END) AS sync_errors,
+      SUM(CASE WHEN date(date_et_heure1) = date('now', 'localtime') THEN 1 ELSE 0 END) AS today
+      FROM bons`),
+    dbAll(`SELECT id, public_ref, date_et_heure1, client, bon_de, status, sync_state,
+      dolibarr_intervention_id, dolibarr_order_id, dolibarr_invoice_id
+      FROM bons ORDER BY id DESC LIMIT 6`),
+  ]);
+  res.json({ totals, recent, dolibarrConfigured: dolibarr.isConfigured() });
+});
+
+app.get('/api/bons', async (req, res) => {
+  const conditions = [];
+  const params = [];
+  if (req.query.q) {
+    conditions.push('(client LIKE ? OR public_ref LIKE ? OR ref_cde_client LIKE ? OR non_du_technicien LIKE ?)');
+    const term = `%${String(req.query.q).slice(0, 100)}%`;
+    params.push(term, term, term, term);
+  }
+  if (req.query.status) {
+    conditions.push('status = ?');
+    params.push(String(req.query.status));
+  }
+  if (req.query.sync) {
+    conditions.push('sync_state = ?');
+    params.push(String(req.query.sync));
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+  const bons = await dbAll(`SELECT * FROM bons ${where} ORDER BY id DESC LIMIT ?`, [...params, limit]);
+  res.json({ bons });
+});
+
+app.get('/api/bons/:id', async (req, res) => {
+  const bon = await getBonWithItems(Number(req.params.id));
+  if (!bon) return res.status(404).json({ error: 'Bon introuvable.' });
+  res.json({ bon });
+});
+
+app.get('/api/bons/:id/pdf', async (req, res) => {
+  const bon = await dbGet('SELECT pdf_url, pdf_filename FROM bons WHERE id = ?', [Number(req.params.id)]);
+  if (!bon) return res.status(404).send('Bon introuvable.');
+  const candidates = [
+    bon.pdf_filename && path.join(pdfDir, path.basename(bon.pdf_filename)),
+    bon.pdf_url && path.join(publicDir, bon.pdf_url.replace(/^\//, '')),
+  ].filter(Boolean);
+  const pdfPath = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!pdfPath) return res.status(404).send('PDF introuvable.');
+  res.type('application/pdf').sendFile(pdfPath);
+});
+
+app.get('/api/dolibarr/status', async (_req, res) => {
+  if (!dolibarr.isConfigured()) {
+    return res.status(503).json({ ok: false, configured: false, message: 'Clé API non configurée.' });
+  }
+  try {
+    await dolibarr.request('GET', 'thirdparties?limit=1&properties=id,name');
+    res.json({ ok: true, configured: true, baseUrl: dolibarr.baseUrl });
+  } catch (error) {
+    res.status(error.status || 502).json({ ok: false, configured: true, message: safeError(error) });
+  }
+});
+
+app.get('/api/dolibarr/thirdparties', async (req, res) => {
+  const query = String(req.query.q || '').trim().slice(0, 80);
+  if (query.length < 2) return res.json({ thirdparties: [] });
+  if (!dolibarr.isConfigured()) return res.status(503).json({ error: 'Connexion Dolibarr non configurée.' });
+  try {
+    const thirdparties = await dolibarr.searchThirdparties(query);
+    res.json({ thirdparties });
+  } catch (error) {
+    res.status(error.status || 502).json({ error: safeError(error) });
+  }
+});
+
+app.post('/api/create-intervention-dimensions', async (req, res) => {
+  try {
+    const payload = normalizeBonPayload(req.body);
+    validateBonPayload(payload);
+
+    const result = await dbRun(`INSERT INTO bons (
+      date_et_heure1, ref_cde_client, bon_de, client, tel_, adresse, mail,
+      type_materiel_, n_de_matricule_, travail_effectue, temps_passe,
+      non_du_technicien, nom_du_signataire_, status, sync_state,
+      heures_d_arrivee, heure_depart, repas, km, hotel, autoroute, deplacement,
+      dolibarr_thirdparty_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'signed', ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`, [
+      payload.date_et_heure1, payload.ref_cde_client, payload.bon_de, payload.client,
+      payload.tel_, payload.adresse, payload.mail, payload.type_materiel_,
+      payload.n_de_matricule_, payload.travail_effectue, payload.temps_passe,
+      payload.non_du_technicien, payload.nom_du_signataire_,
+      dolibarr.isConfigured() ? 'pending' : 'not_configured', payload.heures_d_arrivee,
+      payload.heure_depart, payload.repas, payload.km, payload.hotel, payload.autoroute,
+      payload.deplacement, payload.dolibarr_thirdparty_id,
+    ]);
+
+    const id = result.lastID;
+    const publicRef = buildPublicRef(id, payload.date_et_heure1);
+    await dbRun('UPDATE bons SET public_ref = ? WHERE id = ?', [publicRef, id]);
+    for (const [index, item] of payload.items.entries()) {
+      await dbRun(`INSERT INTO bon_items
+        (bon_id, position, product_id, code, designation, unit_price, quantity, vat_rate, line_total)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+        id, index + 1, item.product_id || null, item.code, item.designation,
+        item.unit_price, item.quantity, item.vat_rate, item.line_total,
+      ]);
+    }
+
+    const pdfFilename = `${publicRef}.pdf`;
+    const pdfPath = path.join(pdfDir, pdfFilename);
+    await generatePdf({ ...payload, id, public_ref: publicRef }, pdfPath);
+    await dbRun('UPDATE bons SET pdf_filename = ?, pdf_url = ?, updated_at = datetime(\'now\') WHERE id = ?', [
+      pdfFilename, `/api/bons/${id}/pdf`, id,
+    ]);
+
+    let sync = null;
+    if (dolibarr.isConfigured() && String(req.body.sync_dolibarr || '1') !== '0') {
+      try {
+        sync = await syncBonToDolibarr(id);
+      } catch (error) {
+        sync = { ok: false, error: safeError(error) };
+      }
+    }
+
+    if (wantsJson(req)) return res.status(201).json({ ok: true, id, publicRef, sync });
+    res.redirect(`/historique.html?created=${id}`);
+  } catch (error) {
+    console.error('Création du bon :', error);
+    if (wantsJson(req)) return res.status(error.status || 400).json({ error: safeError(error) });
+    res.status(error.status || 400).send(`Impossible d'enregistrer le bon : ${escapeHtml(safeError(error))}`);
+  }
+});
+
+app.post('/api/bons/:id/sync-dolibarr', async (req, res) => {
+  if (!dolibarr.isConfigured()) {
+    return res.status(503).json({ error: 'Configurez DOLIBARR_API_KEY sur Render avant la synchronisation.' });
+  }
+  try {
+    const result = await syncBonToDolibarr(Number(req.params.id));
+    res.json({ ok: true, result });
+  } catch (error) {
+    res.status(error.status || 502).json({ error: safeError(error) });
+  }
+});
+
+app.get('/api/export-excel', async (_req, res) => {
+  const bons = await dbAll('SELECT * FROM bons ORDER BY id DESC');
+  const items = await dbAll(`SELECT i.*, b.public_ref FROM bon_items i
+    JOIN bons b ON b.id = i.bon_id ORDER BY i.bon_id DESC, i.position ASC`);
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'GCRS Interventions';
+  const interventions = workbook.addWorksheet('Interventions');
+  interventions.columns = [
+    ['Référence', 'public_ref', 18], ['Date', 'date_et_heure1', 20], ['Client', 'client', 28],
+    ['Type', 'bon_de', 22], ['Matériel', 'type_materiel_', 22], ['Matricule', 'n_de_matricule_', 18],
+    ['Technicien', 'non_du_technicien', 22], ['Temps', 'temps_passe', 12], ['Statut', 'status', 14],
+    ['Synchronisation', 'sync_state', 18], ['Intervention Dolibarr', 'dolibarr_intervention_id', 20],
+    ['Commande Dolibarr', 'dolibarr_order_id', 18], ['Facture Dolibarr', 'dolibarr_invoice_id', 18],
+  ].map(([header, key, width]) => ({ header, key, width }));
+  interventions.addRows(bons.map((bon) => ({
+    ...bon,
+    date_et_heure1: excelWallClockDate(bon.date_et_heure1),
+  })));
+  interventions.getColumn('date_et_heure1').numFmt = 'dd/mm/yyyy hh:mm';
+  styleWorksheet(interventions);
+
+  const lines = workbook.addWorksheet('Pièces');
+  lines.columns = [
+    ['Bon', 'public_ref', 18], ['Code', 'code', 16], ['Désignation', 'designation', 36],
+    ['Prix HT', 'unit_price', 14], ['Quantité', 'quantity', 12], ['TVA', 'vat_rate', 10],
+    ['Total HT', 'line_total', 14],
+  ].map(([header, key, width]) => ({ header, key, width }));
+  lines.addRows(items);
+  lines.getColumn('unit_price').numFmt = '#,##0.00 €';
+  lines.getColumn('line_total').numFmt = '#,##0.00 €';
+  styleWorksheet(lines);
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="interventions-${new Date().toISOString().slice(0, 10)}.xlsx"`);
+  await workbook.xlsx.write(res);
+  res.end();
+});
+
+app.use((error, _req, res, _next) => {
+  console.error(error);
+  res.status(500).json({ error: 'Erreur interne du serveur.' });
+});
+
+async function initializeDatabase() {
+  await dbExec(`
+    PRAGMA foreign_keys = ON;
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE IF NOT EXISTS bons (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date_et_heure1 TEXT,
+      ref_cde_client TEXT,
+      bon_de TEXT,
+      client TEXT,
+      tel_ TEXT,
+      adresse TEXT,
+      mail TEXT,
+      type_materiel_ TEXT,
+      n_de_matricule_ TEXT,
+      travail_effectue TEXT,
+      temps_passe TEXT,
+      non_du_technicien TEXT,
+      nom_du_signataire_ TEXT,
+      pdf_url TEXT
+    );
+    CREATE TABLE IF NOT EXISTS bon_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bon_id INTEGER NOT NULL REFERENCES bons(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL DEFAULT 1,
+      product_id INTEGER,
+      code TEXT,
+      designation TEXT NOT NULL,
+      unit_price REAL NOT NULL DEFAULT 0,
+      quantity REAL NOT NULL DEFAULT 1,
+      vat_rate REAL NOT NULL DEFAULT 20,
+      line_total REAL NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS sync_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bon_id INTEGER NOT NULL REFERENCES bons(id) ON DELETE CASCADE,
+      step TEXT NOT NULL,
+      level TEXT NOT NULL,
+      message TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await ensureColumns('bons', {
+    public_ref: 'TEXT', status: "TEXT NOT NULL DEFAULT 'signed'", sync_state: "TEXT NOT NULL DEFAULT 'not_configured'",
+    sync_error: 'TEXT', sync_at: 'TEXT', pdf_filename: 'TEXT', heures_d_arrivee: 'TEXT', heure_depart: 'TEXT',
+    repas: 'REAL NOT NULL DEFAULT 0', km: 'REAL NOT NULL DEFAULT 0', hotel: 'REAL NOT NULL DEFAULT 0',
+    autoroute: 'REAL NOT NULL DEFAULT 0', deplacement: 'TEXT', dolibarr_thirdparty_id: 'INTEGER',
+    dolibarr_intervention_id: 'INTEGER', dolibarr_order_id: 'INTEGER', dolibarr_invoice_id: 'INTEGER',
+    dolibarr_pdf_uploaded: 'INTEGER NOT NULL DEFAULT 0', created_at: 'TEXT', updated_at: 'TEXT',
+  });
+  await dbRun(`UPDATE bons SET public_ref = printf('BI-%05d', id) WHERE public_ref IS NULL OR public_ref = ''`);
+  await dbRun(`UPDATE bons SET created_at = COALESCE(created_at, datetime('now')), updated_at = COALESCE(updated_at, datetime('now'))`);
 }
 
-// Configuration de la base de données SQLite
-const dbPath = path.join(__dirname, 'database.db');
-const db = new sqlite3.Database(dbPath, (err) => {
-    if (err) console.error('Erreur de connexion à SQLite', err.message);
-    else {
-        console.log('Connecté à la base de données SQLite.');
-        db.run(`CREATE TABLE IF NOT EXISTS bons (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date_et_heure1 TEXT, ref_cde_client TEXT, bon_de TEXT, client TEXT,
-            tel_ TEXT, adresse TEXT, mail TEXT, type_materiel_ TEXT,
-            n_de_matricule_ TEXT, travail_effectue TEXT, temps_passe TEXT,
-            non_du_technicien TEXT, nom_du_signataire_ TEXT, pdf_url TEXT
-        )`);
-    }
-});
+async function syncBonToDolibarr(id) {
+  const bon = await getBonWithItems(id);
+  if (!bon) throw httpError(404, 'Bon introuvable.');
+  await dbRun("UPDATE bons SET sync_state = 'syncing', sync_error = NULL, updated_at = datetime('now') WHERE id = ?", [id]);
+  await logSync(id, 'start', 'info', 'Synchronisation démarrée.');
 
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Affiche la page d'accueil avec les boutons (formulaire)
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'form-dimensions.html'));
-});
-
-// Création du bon d'intervention
-app.post('/api/create-intervention-dimensions', async (req, res) => {
-    const {
-        date_et_heure1, ref_cde_client, bon_de, client, tel_, adresse,
-        mail, type_materiel_, n_de_matricule_, travail_effectue,
-        temps_passe, non_du_technicien, nom_du_signataire_, signature
-    } = req.body;
-
-    const pdfFilename = `bon_${Date.now()}.pdf`;
-    const pdfPath = path.join(pdfDir, pdfFilename);
-    const pdf_url = `/pdfs/${pdfFilename}`;
-
-    try {
-        // 1. Lire le modèle HTML
-        let htmlTemplate = fs.readFileSync(path.join(__dirname, 'modele.html'), 'utf-8');
-
-        // ---------------------------------------------------------
-        // 1 BIS : NOUVEAUTÉ - INJECTION DU LOGO EN TEXTE (BASE64)
-        // ---------------------------------------------------------
-        const logoPath = path.join(__dirname, 'public', 'logo-enquete.png');
-        if (fs.existsSync(logoPath)) {
-            const logoBase64 = fs.readFileSync(logoPath).toString('base64');
-            const logoSrc = `data:image/png;base64,${logoBase64}`;
-            htmlTemplate = htmlTemplate.replace('{{logo_img}}', logoSrc);
-        } else {
-            console.log("Attention : Le logo-enquete.png n'a pas été trouvé dans le dossier public.");
-            htmlTemplate = htmlTemplate.replace('{{logo_img}}', ''); // On vide si l'image manque
+  try {
+    const result = await buildDolibarrFlow({
+      client: dolibarr,
+      bon,
+      pdfPath: resolvePdfPath(bon),
+      onProgress: async (step, values, message) => {
+        const allowed = {
+          thirdparty: 'dolibarr_thirdparty_id', intervention: 'dolibarr_intervention_id',
+          order: 'dolibarr_order_id', invoice: 'dolibarr_invoice_id', pdf: 'dolibarr_pdf_uploaded',
+        };
+        if (allowed[step] && values?.id !== undefined) {
+          await dbRun(`UPDATE bons SET ${allowed[step]} = ?, updated_at = datetime('now') WHERE id = ?`, [values.id, id]);
+          bon[allowed[step]] = values.id;
         }
-        // ---------------------------------------------------------
-
-        // 2. Remplacer les balises par les données du formulaire
-        htmlTemplate = htmlTemplate.replace('{{bon_de}}', bon_de || '');
-        htmlTemplate = htmlTemplate.replace('{{date_et_heure1}}', date_et_heure1 || '');
-        htmlTemplate = htmlTemplate.replace('{{client}}', client || '');
-        htmlTemplate = htmlTemplate.replace('{{ref_cde_client}}', ref_cde_client || '');
-        htmlTemplate = htmlTemplate.replace('{{adresse}}', adresse || '');
-        htmlTemplate = htmlTemplate.replace('{{tel_}}', tel_ || '');
-        htmlTemplate = htmlTemplate.replace('{{mail}}', mail || '');
-        htmlTemplate = htmlTemplate.replace('{{type_materiel_}}', type_materiel_ || '');
-        htmlTemplate = htmlTemplate.replace('{{n_de_matricule_}}', n_de_matricule_ || '');
-        htmlTemplate = htmlTemplate.replace('{{travail_effectue}}', (travail_effectue || '').replace(/\n/g, '<br>'));
-        htmlTemplate = htmlTemplate.replace('{{temps_passe}}', temps_passe || '');
-        htmlTemplate = htmlTemplate.replace('{{non_du_technicien}}', non_du_technicien || '');
-        htmlTemplate = htmlTemplate.replace('{{nom_du_signataire_}}', nom_du_signataire_ || '');
-
-        // Gérer la signature
-        if (signature && signature.startsWith('data:image/png;base64,')) {
-            htmlTemplate = htmlTemplate.replace('{{signature_img}}', `<img src="${signature}" style="max-height: 80px; max-width: 200px;" />`);
-        } else {
-            htmlTemplate = htmlTemplate.replace('{{signature_img}}', '');
-        }
-
-        // 3. Générer le PDF avec Puppeteer
-        const browser = await puppeteer.launch({ 
-            headless: true,
-            args: [
-                '--no-sandbox', 
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage', // Empêche le crash dû à la mémoire partagée sur Render
-                '--disable-gpu',           // Désactive la carte graphique (inutile sur serveur)
-                '--no-zygote',
-                '--single-process'         // Force Chrome à utiliser un seul processus ultra-léger
-            ]
-        });
-        const page = await browser.newPage();
-        await page.setContent(htmlTemplate, { waitUntil: 'networkidle0' });
-        await page.pdf({ 
-            path: pdfPath, 
-            format: 'A4', 
-            printBackground: true, // IMPORTANT : Ajouté pour imprimer les couleurs (tableau gris)
-            margin: { top: '20px', right: '20px', bottom: '20px', left: '20px' } 
-        });
-        await browser.close();
-
-        // 4. Enregistrer dans la base de données
-        const query = `INSERT INTO bons (
-            date_et_heure1, ref_cde_client, bon_de, client, tel_, adresse,
-            mail, type_materiel_, n_de_matricule_, travail_effectue,
-            temps_passe, non_du_technicien, nom_du_signataire_, pdf_url
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-
-        const params = [
-            date_et_heure1, ref_cde_client, bon_de, client, tel_, adresse,
-            mail, type_materiel_, n_de_matricule_, travail_effectue,
-            temps_passe, non_du_technicien, nom_du_signataire_, pdf_url
-        ];
-
-        db.run(query, params, function(err) {
-            if (err) return res.status(500).send("Erreur BDD : " + err.message);
-            res.redirect('/historique.html'); // Redirection vers ton historique
-        });
-
-    } catch (error) {
-        console.error("Erreur lors de la création du PDF :", error);
-        res.status(500).send("Erreur lors de la génération du PDF.");
-    }
-});
-
-// Route de l'historique
-app.get('/api/bons', (req, res) => {
-    db.all("SELECT * FROM bons ORDER BY id DESC", [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ bons: rows });
+        await logSync(id, step, 'info', message);
+      },
     });
-});
+    await dbRun("UPDATE bons SET sync_state = 'synced', sync_at = datetime('now'), sync_error = NULL, updated_at = datetime('now') WHERE id = ?", [id]);
+    await logSync(id, 'complete', 'success', 'Synchronisation terminée.');
+    return result;
+  } catch (error) {
+    const message = safeError(error);
+    await dbRun("UPDATE bons SET sync_state = 'error', sync_error = ?, updated_at = datetime('now') WHERE id = ?", [message.slice(0, 1000), id]);
+    await logSync(id, 'error', 'error', message);
+    throw error;
+  }
+}
 
-app.listen(PORT, () => console.log(`Serveur démarré sur le port ${PORT}`));
+async function generatePdf(bon, outputPath) {
+  let template = fs.readFileSync(path.join(rootDir, 'modele.html'), 'utf8');
+  const logoPath = path.join(publicDir, 'logo-enquete.png');
+  const logo = fs.existsSync(logoPath) ? `data:image/png;base64,${fs.readFileSync(logoPath).toString('base64')}` : '';
+  const items = bon.items || [];
+  const totalHt = items.reduce((sum, item) => sum + item.line_total, 0);
+  const rows = items.length ? items.map((item) => `<tr>
+    <td>${escapeHtml(item.code)}</td><td>${escapeHtml(item.designation)}</td>
+    <td class="number">${money(item.unit_price)}</td><td class="number">${number(item.quantity)}</td>
+    <td class="number">${money(item.line_total)}</td></tr>`).join('') :
+    '<tr><td colspan="5" class="empty-state">Aucune pièce ou fourniture déclarée</td></tr>';
+
+  const replacements = {
+    logo_img: logo, public_ref: bon.public_ref, bon_de: bon.bon_de, date_et_heure1: formatDateTime(bon.date_et_heure1),
+    client: bon.client, ref_cde_client: bon.ref_cde_client, adresse: nl2br(bon.adresse), tel_: bon.tel_, mail: bon.mail,
+    type_materiel_: bon.type_materiel_, n_de_matricule_: bon.n_de_matricule_, travail_effectue: nl2br(bon.travail_effectue),
+    temps_passe: bon.temps_passe, non_du_technicien: bon.non_du_technicien, nom_du_signataire_: bon.nom_du_signataire_,
+    heures_d_arrivee: bon.heures_d_arrivee, heure_depart: bon.heure_depart, repas: number(bon.repas), km: number(bon.km),
+    hotel: number(bon.hotel), autoroute: money(bon.autoroute), deplacement: bon.deplacement, items_rows: rows,
+    total_ht: money(totalHt), signature_img: bon.signature ? `<img src="${bon.signature}" alt="Signature client">` : '',
+  };
+  for (const [key, rawValue] of Object.entries(replacements)) {
+    const htmlKeys = new Set(['logo_img', 'adresse', 'travail_effectue', 'items_rows', 'signature_img']);
+    const value = htmlKeys.has(key) ? String(rawValue || '') : escapeHtml(rawValue || '');
+    template = template.replaceAll(`{{${key}}}`, value);
+  }
+
+  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(template, { waitUntil: 'networkidle0' });
+    await page.pdf({ path: outputPath, format: 'A4', printBackground: true, margin: { top: '12mm', right: '12mm', bottom: '12mm', left: '12mm' } });
+  } finally {
+    await browser.close();
+  }
+}
+
+function normalizeBonPayload(body) {
+  let parsedItems = [];
+  try { parsedItems = Array.isArray(body.items) ? body.items : JSON.parse(body.items || '[]'); } catch { parsedItems = []; }
+  if (!parsedItems.length && (body.code || body.champ_de_saisie2)) {
+    parsedItems = [{ code: body.code, designation: body.champ_de_saisie2, unit_price: body.champ_de_saisie4, quantity: body.champ_de_saisie5, vat_rate: 20 }];
+  }
+  const items = parsedItems.filter((item) => String(item.designation || item.code || '').trim()).map((item) => {
+    const unitPrice = toNumber(item.unit_price ?? item.price);
+    const quantity = Math.max(toNumber(item.quantity ?? item.qty) || 1, 0);
+    return {
+      product_id: Number(item.product_id) || null,
+      code: clean(item.code, 80), designation: clean(item.designation, 500),
+      unit_price: unitPrice, quantity, vat_rate: Math.max(toNumber(item.vat_rate) || 20, 0),
+      line_total: roundMoney(unitPrice * quantity),
+    };
+  });
+  return {
+    date_et_heure1: clean(body.date_et_heure1, 32), ref_cde_client: clean(body.ref_cde_client, 100),
+    bon_de: clean(body.bon_de, 80), client: clean(body.client, 200), tel_: clean(body.tel_, 60),
+    adresse: clean(body.adresse, 1000), mail: clean(body.mail, 254), type_materiel_: clean(body.type_materiel_, 200),
+    n_de_matricule_: clean(body.n_de_matricule_, 150), travail_effectue: clean(body.travail_effectue, 10000),
+    temps_passe: clean(body.temps_passe, 30), non_du_technicien: clean(body.non_du_technicien, 150),
+    nom_du_signataire_: clean(body.nom_du_signataire_, 150), signature: validSignature(body.signature),
+    bon_pour_accord: String(body.bon_pour_accord || '') === '1', heures_d_arrivee: clean(body.heures_d_arrivee, 8),
+    heure_depart: clean(body.heure_depart, 8), repas: toNumber(body.repas), km: toNumber(body.km),
+    hotel: toNumber(body.hotel), autoroute: toNumber(body.autoroute), deplacement: clean(body.deplacement, 500),
+    dolibarr_thirdparty_id: Number(body.dolibarr_thirdparty_id) || null, items,
+  };
+}
+
+function validateBonPayload(payload) {
+  const required = [['date_et_heure1', 'La date'], ['client', 'Le client'], ['bon_de', 'Le type de bon'],
+    ['travail_effectue', 'Le travail effectué'], ['non_du_technicien', 'Le technicien'], ['nom_du_signataire_', 'Le signataire']];
+  for (const [key, label] of required) if (!payload[key]) throw httpError(400, `${label} est obligatoire.`);
+  if (!payload.bon_pour_accord) throw httpError(400, "L'accord du client est obligatoire.");
+  if (!payload.signature) throw httpError(400, 'La signature du client est obligatoire.');
+  if (payload.mail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.mail)) throw httpError(400, "L'adresse e-mail n'est pas valide.");
+}
+
+function optionalBasicAuth(req, res, next) {
+  const user = process.env.APP_USER;
+  const password = process.env.APP_PASSWORD;
+  if (!user || !password || req.path === '/api/health') return next();
+  const header = req.headers.authorization || '';
+  if (header.startsWith('Basic ')) {
+    const [candidateUser, candidatePassword] = Buffer.from(header.slice(6), 'base64').toString().split(':');
+    if (safeEqual(candidateUser, user) && safeEqual(candidatePassword, password)) return next();
+  }
+  res.setHeader('WWW-Authenticate', 'Basic realm="GCRS Interventions", charset="UTF-8"');
+  res.status(401).send('Authentification requise.');
+}
+
+function safeEqual(left = '', right = '') {
+  const a = Buffer.from(String(left)); const b = Buffer.from(String(right));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+async function getBonWithItems(id) {
+  const bon = await dbGet('SELECT * FROM bons WHERE id = ?', [id]);
+  if (!bon) return null;
+  bon.items = await dbAll('SELECT * FROM bon_items WHERE bon_id = ? ORDER BY position ASC', [id]);
+  return bon;
+}
+
+function resolvePdfPath(bon) {
+  const candidates = [bon.pdf_filename && path.join(pdfDir, path.basename(bon.pdf_filename)), bon.pdf_url && path.join(publicDir, bon.pdf_url.replace(/^\//, ''))].filter(Boolean);
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+}
+
+function buildPublicRef(id, dateValue) {
+  const date = new Date(dateValue || Date.now());
+  const year = Number.isNaN(date.getTime()) ? new Date().getFullYear() : date.getFullYear();
+  return `BI-${year}-${String(id).padStart(5, '0')}`;
+}
+
+function styleWorksheet(sheet) {
+  sheet.views = [{ state: 'frozen', ySplit: 1 }];
+  sheet.autoFilter = { from: 'A1', to: sheet.getRow(1).getCell(sheet.columnCount).address };
+  const header = sheet.getRow(1);
+  header.height = 24;
+  for (let column = 1; column <= sheet.columnCount; column += 1) {
+    const cell = header.getCell(column);
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF173B57' } };
+    cell.alignment = { vertical: 'middle' };
+  }
+}
+
+function dbRun(sql, params = []) {
+  const result = db.prepare(sql).run(...params);
+  return Promise.resolve({ lastID: Number(result.lastInsertRowid), changes: Number(result.changes) });
+}
+function dbGet(sql, params = []) { return Promise.resolve(db.prepare(sql).get(...params)); }
+function dbAll(sql, params = []) { return Promise.resolve(db.prepare(sql).all(...params)); }
+function dbExec(sql) { db.exec(sql); return Promise.resolve(); }
+
+async function ensureColumns(table, columns) {
+  const existing = new Set((await dbAll(`PRAGMA table_info(${table})`)).map((column) => column.name));
+  for (const [name, definition] of Object.entries(columns)) {
+    if (!existing.has(name)) await dbRun(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+  }
+}
+
+function logSync(bonId, step, level, message) {
+  return dbRun('INSERT INTO sync_events (bon_id, step, level, message) VALUES (?, ?, ?, ?)', [bonId, step, level, String(message).slice(0, 2000)]);
+}
+
+function wantsJson(req) { return req.is('application/json') || String(req.headers.accept || '').includes('application/json'); }
+function clean(value, max) { return String(value || '').trim().slice(0, max); }
+function toNumber(value) { const parsed = Number(String(value ?? 0).replace(',', '.')); return Number.isFinite(parsed) ? parsed : 0; }
+function roundMoney(value) { return Math.round((Number(value) + Number.EPSILON) * 100) / 100; }
+function number(value) { return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(Number(value) || 0); }
+function money(value) { return `${new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value) || 0)} €`; }
+function formatDateTime(value) { const date = new Date(value); return Number.isNaN(date.getTime()) ? String(value || '') : new Intl.DateTimeFormat('fr-FR', { dateStyle: 'long', timeStyle: 'short' }).format(date); }
+function excelWallClockDate(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  return match ? new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]))) : null;
+}
+function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char])); }
+function nl2br(value) { return escapeHtml(value || '').replace(/\n/g, '<br>'); }
+function validSignature(value) { const signature = String(value || ''); return /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(signature) && signature.length < 3_000_000 ? signature : ''; }
+function safeError(error) { return error instanceof DolibarrError ? error.message : String(error?.message || error || 'Erreur inconnue'); }
+function httpError(status, message) { const error = new Error(message); error.status = status; return error; }
+
+initializeDatabase()
+  .then(() => app.listen(PORT, () => console.log(`GCRS Interventions disponible sur le port ${PORT}`)))
+  .catch((error) => { console.error('Initialisation impossible :', error); process.exitCode = 1; });
+
+module.exports = { app, db, initializeDatabase, normalizeBonPayload, buildPublicRef };

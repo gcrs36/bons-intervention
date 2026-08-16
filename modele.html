@@ -1,205 +1,96 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <style>
-        body { 
-            font-family: Arial, sans-serif; 
-            font-size: 11px; 
-            color: #000; 
-            margin: 0; 
-            padding: 0; 
-            background: #fff;
-        }
-        
-        /* En-tête avec ton image injectée via server.js */
-        .header-image {
-    width: 100%;
-    height: auto;
-    display: block;
-    margin-bottom: 15px;
-}
-
-        /* Titre du bon */
-        .bon-title { 
-            font-size: 14px; 
-            font-weight: bold; 
-            margin-bottom: 10px; 
-            text-transform: uppercase; 
-            border-bottom: 1px solid #000;
-            padding-bottom: 5px;
-            text-align: center;
-        }
-
-        /* Grille des informations (Date, Client, Matériel) */
-        .info-grid { 
-            display: flex; 
-            gap: 10px; 
-            margin-bottom: 10px; 
-        }
-        .info-box { 
-            border: 1px solid #000; 
-            padding: 8px; 
-            width: 50%; 
-            min-height: 110px; 
-            font-size: 11px; 
-            line-height: 1.4;
-            box-sizing: border-box;
-        }
-        
-        /* Tableau des pièces */
-        table { 
-            width: 100%; 
-            border-collapse: collapse; 
-            margin-bottom: 10px; 
-            font-size: 10px; 
-        }
-        th, td { 
-            border: 1px solid #000; 
-            padding: 6px; 
-            text-align: left; 
-        }
-        th { 
-            background-color: #f2f2f2; 
-            text-align: center; 
-            font-weight: bold; 
-        }
-        .empty-row { height: 20px; }
-
-        /* Section Temps passé / Déplacement */
-        .details-section { 
-            border: 1px solid #000; 
-            padding: 8px; 
-            margin-bottom: 10px; 
-            font-size: 10px; 
-        }
-        .details-row { 
-            display: flex; 
-            justify-content: space-between; 
-            margin-bottom: 4px; 
-        }
-
-        /* Bas de page : Signatures et mentions légales */
-        .footer-section { 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: flex-start; 
-            margin-top: 10px; 
-        }
-        .signatures-block { 
-            width: 55%; 
-            font-size: 11px; 
-            line-height: 1.6; 
-        }
-        .signature-box { 
-            border: 1px solid #000; 
-            width: 40%; 
-            height: 90px; 
-            text-align: center; 
-            padding-top: 5px; 
-            box-sizing: border-box;
-        }
-        .signature-box .title-accord { 
-            font-weight: bold; 
-            font-size: 10px; 
-            margin-bottom: 5px; 
-        }
-        
-        /* Texte légal tout en bas */
-        .legal-text { 
-            font-size: 7.5px; 
-            text-align: justify; 
-            margin-top: 15px; 
-            line-height: 1.1; 
-            border-top: 1px solid #ccc; 
-            padding-top: 5px; 
-        }
-    </style>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #173b57; font: 10px Arial, sans-serif; }
+    .top { display: flex; align-items: center; justify-content: space-between; border-bottom: 3px solid #ec6a3c; padding-bottom: 10px; }
+    .logo { max-width: 330px; max-height: 72px; object-fit: contain; object-position: left center; }
+    .reference { text-align: right; }
+    .reference strong { display: block; color: #ec6a3c; font-size: 17px; margin-bottom: 3px; }
+    .reference span { color: #5e7180; }
+    .title { margin: 18px 0 10px; font-size: 20px; line-height: 1.1; color: #173b57; }
+    .subtitle { margin-bottom: 18px; color: #687d8d; font-size: 11px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+    .card { border: 1px solid #d9e1e7; border-radius: 7px; padding: 11px; min-height: 92px; }
+    .card h2, .section-title { margin: 0 0 8px; color: #ec6a3c; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+    .card p { margin: 0 0 4px; line-height: 1.4; }
+    .label { color: #708493; }
+    .work { min-height: 90px; line-height: 1.45; }
+    table { border-collapse: collapse; width: 100%; margin: 8px 0 12px; }
+    th { background: #173b57; color: white; padding: 7px; text-align: left; font-size: 9px; }
+    td { border-bottom: 1px solid #e2e8ec; padding: 7px; }
+    .number { text-align: right; white-space: nowrap; }
+    .empty-state { color: #82939f; text-align: center; padding: 14px; }
+    .total { text-align: right; font-size: 12px; font-weight: bold; margin: -4px 0 15px; }
+    .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin: 8px 0 14px; }
+    .metric { background: #f3f6f8; border-radius: 5px; padding: 8px; }
+    .metric span { display: block; color: #748794; font-size: 8px; text-transform: uppercase; margin-bottom: 3px; }
+    .signature-area { display: grid; grid-template-columns: 1fr 220px; gap: 18px; align-items: stretch; margin-top: 12px; }
+    .names { padding: 10px 0; line-height: 2; }
+    .signature { height: 105px; border: 1px solid #cfd9df; border-radius: 7px; text-align: center; padding: 7px; }
+    .signature strong { display: block; color: #ec6a3c; font-size: 9px; margin-bottom: 5px; }
+    .signature img { max-width: 195px; max-height: 72px; }
+    .legal { color: #6d808d; border-top: 1px solid #dfe6ea; margin-top: 18px; padding-top: 7px; font-size: 7px; line-height: 1.35; text-align: justify; }
+  </style>
 </head>
 <body>
+  <header class="top">
+    <img class="logo" src="{{logo_img}}" alt="GCRS Dimensions">
+    <div class="reference"><strong>{{public_ref}}</strong><span>{{date_et_heure1}}</span></div>
+  </header>
 
-    <!-- L'image de l'en-tête (le logo) sera insérée ici automatiquement par le serveur -->
-    <img src="{{logo_img}}" class="header-image" alt="Dimensions En-tête">
+  <h1 class="title">Bon d’intervention</h1>
+  <div class="subtitle">{{bon_de}} · Document signé par le client</div>
 
-    <!-- Titre du bon -->
-    <div class="bon-title">BON DE : {{bon_de}}</div>
+  <div class="grid">
+    <section class="card">
+      <h2>Client</h2>
+      <p><strong>{{client}}</strong></p>
+      <p>{{adresse}}</p>
+      <p><span class="label">Téléphone :</span> {{tel_}}</p>
+      <p><span class="label">E-mail :</span> {{mail}}</p>
+      <p><span class="label">Réf. client :</span> {{ref_cde_client}}</p>
+    </section>
+    <section class="card">
+      <h2>Équipement</h2>
+      <p><span class="label">Type :</span> <strong>{{type_materiel_}}</strong></p>
+      <p><span class="label">Matricule :</span> {{n_de_matricule_}}</p>
+      <p><span class="label">Déplacement :</span> {{deplacement}}</p>
+    </section>
+  </div>
 
-   <!-- Ligne 1 : Client (Gauche) et Machine (Droite) -->
-    <div class="info-grid">
-        <!-- Cadre 1 : Infos Client -->
-        <div class="info-box">
-            <strong>Date :</strong> {{date_et_heure1}}<br>
-            <strong>Client :</strong> {{client}}<br>
-            <strong>Réf. Cde client :</strong> {{ref_cde_client}}<br>
-            <strong>Adresse :</strong> {{adresse}}<br>
-            <strong>Tél :</strong> {{tel_}} | <strong>@ Mail :</strong> {{mail}}
-        </div>
-        
-        <!-- Cadre 2 : Infos Machine -->
-        <div class="info-box">
-            <strong>TYPE MATÉRIEL :</strong> {{type_materiel_}}<br>
-            <strong>N° matricule :</strong> {{n_de_matricule_}}
-        </div>
+  <section class="card work">
+    <h2>Travail effectué</h2>
+    {{travail_effectue}}
+  </section>
+
+  <div class="section-title" style="margin-top: 14px;">Pièces et fournitures</div>
+  <table>
+    <thead><tr><th style="width:16%">Code</th><th>Désignation</th><th style="width:15%;text-align:right">Prix HT</th><th style="width:10%;text-align:right">Qté</th><th style="width:17%;text-align:right">Total HT</th></tr></thead>
+    <tbody>{{items_rows}}</tbody>
+  </table>
+  <div class="total">Total pièces HT : {{total_ht}}</div>
+
+  <div class="section-title">Temps et frais</div>
+  <div class="metrics">
+    <div class="metric"><span>Arrivée / départ</span>{{heures_d_arrivee}} – {{heure_depart}}</div>
+    <div class="metric"><span>Temps passé</span>{{temps_passe}}</div>
+    <div class="metric"><span>Distance</span>{{km}} km</div>
+    <div class="metric"><span>Autoroute</span>{{autoroute}}</div>
+    <div class="metric"><span>Repas</span>{{repas}}</div>
+    <div class="metric"><span>Hôtel</span>{{hotel}}</div>
+  </div>
+
+  <div class="signature-area">
+    <div class="names">
+      <div><span class="label">Technicien :</span> <strong>{{non_du_technicien}}</strong></div>
+      <div><span class="label">Signataire :</span> <strong>{{nom_du_signataire_}}</strong></div>
     </div>
+    <div class="signature"><strong>Bon pour accord</strong>{{signature_img}}</div>
+  </div>
 
-    <!-- Ligne 2 : Travail effectué (100% de la largeur) en dessous -->
-    <div class="info-box" style="width: 100%; height: auto; min-height: 120px; margin-bottom: 10px;">
-        <strong>TRAVAIL EFFECTUÉ :</strong><br>
-        <div style="word-break: break-word; white-space: pre-wrap; font-size: 10px; margin-top: 5px; line-height: 1.3;">{{travail_effectue}}</div>
-    </div>
-
-    <!-- Tableau Pièces et fournitures -->
-    <div style="font-weight: bold; font-size: 10px; margin-bottom: 3px;">PIÈCES ET FOURNITURES :</div>
-    <table>
-        <thead>
-            <tr>
-                <th style="width: 15%;">CODE</th>
-                <th style="width: 45%;">DÉSIGNATION</th>
-                <th style="width: 15%;">PRIX</th>
-                <th style="width: 10%;">QTÉ</th>
-                <th style="width: 15%;">TOTAL H.T.</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr class="empty-row"><td></td><td></td><td></td><td></td><td></td></tr>
-            <tr class="empty-row"><td></td><td></td><td></td><td></td><td></td></tr>
-            <tr class="empty-row"><td></td><td></td><td></td><td></td><td></td></tr>
-        </tbody>
-    </table>
-
-    <!-- Section Temps passé et déplacements -->
-    <div class="details-section">
-        <div class="details-row">
-            <span><strong>TEMPS PASSÉ :</strong> {{temps_passe}}</span>
-            <span><strong>DÉPLACEMENT :</strong> </span>
-        </div>
-        <div class="details-row" style="margin-top: 5px;">
-            <span><strong>Heure d’arrivée :</strong> </span>
-            <span><strong>Heure départ :</strong> </span>
-            <span><strong>KM :</strong> </span>
-            <span><strong>REPAS :</strong> </span>
-            <span><strong>HÔTEL :</strong> </span>
-            <span><strong>Autoroute :</strong> </span>
-        </div>
-    </div>
-
-    <!-- Signatures et intervenants -->
-    <div class="footer-section">
-        <div class="signatures-block">
-            <strong>Nom du technicien :</strong> {{non_du_technicien}}<br><br>
-            <strong>Nom du signataire :</strong> {{nom_du_signataire_}}
-        </div>
-        <div class="signature-box">
-            <div class="title-accord">Bon pour accord</div>
-            {{signature_img}}
-        </div>
-    </div>
-
-    <!-- Mentions légales du bas -->
-    <div class="legal-text">
-        Je déclare avoir pris connaissance et rester en possession d’un exemplaire des conditions générales de ventes au verso du présent document et les accepte dans leur intégralité. 
-        La clause de réserve de propriété des marchandises vendues n’interviendra qu’après parfait paiement du prix convenu (Loi N° 80 335 du 12 mai 1980).
-    </div>
-
+  <div class="legal">Le signataire reconnaît la bonne exécution des travaux décrits ci-dessus et déclare avoir pris connaissance des conditions générales de vente applicables. La clause de réserve de propriété des marchandises vendues n’interviendra qu’après parfait paiement du prix convenu.</div>
 </body>
 </html>

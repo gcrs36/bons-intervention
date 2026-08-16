@@ -1,0 +1,10 @@
+node_modules/
+.cache/
+.npm-cache/
+.env
+database.db
+database.db-shm
+database.db-wal
+pdfs/
+public/pdfs/*.pdf
+*.log
