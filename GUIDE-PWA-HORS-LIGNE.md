@@ -34,8 +34,10 @@ L’application possède ensuite sa propre icône et s’ouvre dans une fenêtre
 
 1. Ouvrir l’application installée.
 2. Choisir **Nouveau document**.
-3. Remplir et signer le bon normalement.
-4. Appuyer sur **Enregistrer**.
+3. Choisir la **société** : GCRS, Dimensions, ESI, ABEG ou ARBOREAL.
+4. Choisir l’un des bons proposés pour cette société.
+5. Remplir et signer le formulaire correspondant au PDF choisi.
+6. Appuyer sur **Enregistrer**.
 
 Une référence contenant `LOCAL` est créée. Le bon apparaît dans l’historique avec l’état **Hors ligne**. Les données, photos et signatures restent sur l’appareil.
 

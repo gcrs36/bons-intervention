@@ -1,6 +1,6 @@
 {
   "name": "bon-intervention",
-  "version": "4.0.0",
+  "version": "4.2.0",
   "description": "Application installable de bons d'intervention, utilisable hors ligne et connectable à Dolibarr",
   "private": true,
   "engines": {

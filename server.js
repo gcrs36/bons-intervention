@@ -94,6 +94,10 @@ app.get('/api/bons', async (req, res) => {
     conditions.push('sync_state = ?');
     params.push(String(req.query.sync));
   }
+  if (req.query.variant) {
+    conditions.push('bon_variant = ?');
+    params.push(String(req.query.variant));
+  }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
   const bons = await dbAll(`SELECT * FROM bons ${where} ORDER BY id DESC LIMIT ?`, [...params, limit]);
@@ -249,7 +253,7 @@ app.post('/api/create-bon', async (req, res) => {
     const pdfFilename = `${publicRef}.pdf`;
     const pdfPath = path.join(pdfDir, pdfFilename);
     try {
-      if (payload.bon_type === 'intervention' && payload.bon_variant === 'dimensions') {
+      if (payload.definition.family === 'intervention' && payload.bon_variant === 'dimensions') {
         await generatePdf({ ...payload, id, public_ref: publicRef }, pdfPath);
       } else {
         await generateGenericPdf({ ...payload, id, public_ref: publicRef }, pdfPath);
@@ -662,6 +666,7 @@ async function generatePdf(bon, outputPath) {
 function normalizeBonPayload(body) {
   let parsedItems = [];
   try { parsedItems = Array.isArray(body.items) ? body.items : JSON.parse(body.items || '[]'); } catch { parsedItems = []; }
+  if (!Array.isArray(parsedItems)) parsedItems = [];
   if (!parsedItems.length && (body.code || body.champ_de_saisie2)) {
     parsedItems = [{ code: body.code, designation: body.champ_de_saisie2, unit_price: body.champ_de_saisie4, quantity: body.champ_de_saisie5, vat_rate: 20 }];
   }
@@ -701,7 +706,7 @@ function normalizeGenericPayload(body) {
     visite_massicot: `Visite trimestrielle massicot — ${(extra.checklist || []).filter((row) => row.state && row.state !== 'Non applicable').length} point(s) contrôlé(s).${fields.conformite ? ` Conclusion : ${fields.conformite}.` : ''}`,
     mise_en_service: clean(fields.observations || 'Mise en service et formation réalisées.', 10000),
     fiche_machine: clean(fields.action_realisee || fields.observation || 'Fiche machine atelier.', 10000),
-  }[definition.id];
+  }[definition.family || definition.id];
 
   return {
     ...base,
@@ -722,7 +727,7 @@ function sanitizeExtraPayload(value, technicianSignature) {
   try { parsed = JSON.parse(source); } catch { throw httpError(400, 'Les données complémentaires du bon sont illisibles.'); }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) parsed = {};
   const fields = {};
-  for (const [key, fieldValue] of Object.entries(parsed.fields || {}).slice(0, 100)) {
+  for (const [key, fieldValue] of Object.entries(parsed.fields || {}).slice(0, 250)) {
     fields[clean(key, 80)] = clean(fieldValue, 10000);
   }
   const checklist = (Array.isArray(parsed.checklist) ? parsed.checklist : []).slice(0, 80).map((row) => ({
@@ -749,18 +754,16 @@ function sanitizePhotos(value) {
 
 function validateGenericPayload(payload) {
   const required = [['date_et_heure1', 'La date'], ['client', 'Le client'], ['non_du_technicien', 'Le technicien']];
-  if (payload.bon_type !== 'fiche_machine') required.push(['nom_du_signataire_', 'Le signataire']);
-  if (['intervention', 'visite_massicot'].includes(payload.bon_type)) required.push(['type_materiel_', 'Le matériel ou la machine']);
-  if (payload.bon_type === 'intervention') required.push(['travail_effectue', 'Le travail effectué']);
+  const family = payload.definition.family || payload.definition.id;
+  const needsSignature = family !== 'fiche_machine' && payload.definition.fields?.some((field) => /fa-gavel/.test(field.icon || ''));
+  if (needsSignature) required.push(['nom_du_signataire_', 'Le signataire']);
+  if (['intervention', 'visite_massicot', 'livraison'].includes(family)) required.push(['type_materiel_', 'Le matériel ou la machine']);
   for (const [key, label] of required) if (!payload[key]) throw httpError(400, `${label} est obligatoire.`);
-  if (payload.bon_type === 'visite_massicot' && payload.extra.checklist.length !== 42) {
+  if (family === 'visite_massicot' && payload.extra.checklist.length && payload.extra.checklist.length !== 42) {
     throw httpError(400, 'La checklist massicot doit contenir les 42 points de A1 à D38.');
   }
-  if (payload.bon_type === 'visite_massicot' && !payload.extra.fields.trimestre) {
-    throw httpError(400, 'Le trimestre de la visite est obligatoire.');
-  }
-  if (payload.bon_type !== 'fiche_machine' && !payload.signature) throw httpError(400, 'La signature du client est obligatoire.');
-  if (payload.bon_type === 'intervention' && !payload.bon_pour_accord) throw httpError(400, "L'accord du client est obligatoire.");
+  if (needsSignature && !payload.signature) throw httpError(400, 'La signature du client est obligatoire.');
+  if (family === 'intervention' && payload.definition.fields?.some((field) => field.id === 'bon_pour_accord') && !payload.bon_pour_accord) throw httpError(400, "L'accord du client est obligatoire.");
   if (payload.mail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.mail)) throw httpError(400, "L'adresse e-mail n'est pas valide.");
 }
 
