@@ -429,20 +429,33 @@ async function generatePdf(bon, outputPath) {
     function drawPiecesTable(items, startY) {
       const columns = [61.1, 260.1, 40.4, 47.8, 77.85];
       const labels = ['CODE', 'DÉSIGNATION', 'PRIX', 'QTÉ', 'TOTAL H.T.'];
-      const header = drawAdaptiveRow(left, startY, columns, labels.map((label) => ({
-        value: label, options: { bold: true, align: 'center', size: 8, padding: 2 },
-      })), 14.75);
-      const visible = items.slice(0, 2);
-      const rowCount = Math.max(visible.length, 2);
-      let cursorY = header.bottom;
-      for (let row = 0; row < rowCount; row += 1) {
-        const item = visible[row] || {};
+      const pageBottom = doc.page.height - 54;
+      const rows = items.length ? items : [{}];
+      let cursorY = startY;
+      const drawTableHeader = () => {
+        const header = drawAdaptiveRow(left, cursorY, columns, labels.map((label) => ({
+          value: label, options: { bold: true, align: 'center', size: 8, padding: 2 },
+        })), 14.75);
+        cursorY = header.bottom;
+      };
+      drawTableHeader();
+      for (const item of rows) {
         const values = item.designation || item.code ? [
           item.code || '', item.designation || '', money(item.unit_price), number(item.quantity), money(item.line_total),
         ] : ['', '', '', '', ''];
-        const result = drawAdaptiveRow(left, cursorY, columns, values.map((value, index) => ({
+        const cells = values.map((value, index) => ({
           value, options: { align: index >= 2 ? 'right' : 'left', size: 8, padding: 4 },
-        })), row === 0 ? 44.45 : 14.75);
+        }));
+        const requiredHeight = adaptiveRowHeight(columns, cells, 22);
+        if (cursorY + requiredHeight > pageBottom) {
+          doc.addPage({ size: 'A4', margin: 0 });
+          drawHeader();
+          doc.fillColor(black).font('Helvetica-Bold').fontSize(10)
+            .text('PIÈCES ET FOURNITURES - SUITE', left, pt(2.2), { width, align: 'center' });
+          cursorY = pt(2.55);
+          drawTableHeader();
+        }
+        const result = drawAdaptiveRow(left, cursorY, columns, cells, 22);
         cursorY = result.bottom;
       }
       return cursorY;
@@ -493,7 +506,7 @@ async function generatePdf(bon, outputPath) {
     doc.fillColor(black).font('Helvetica-Bold').fontSize(8)
       .text('PIÈCES ET FOURNITURES :', left, piecesLabelY, { width });
     const items = Array.isArray(bon.items) ? bon.items : [];
-    const expensesY = drawPiecesTable(items, piecesLabelY + pt(0.226));
+    let expensesY = drawPiecesTable(items, piecesLabelY + pt(0.226));
     const expenseColumns = [126.1, 95.3, 125.1, 140.75];
     const expenseRows = [
       { minimumHeight: 22.1, cells: [
@@ -505,6 +518,15 @@ async function generatePdf(bon, outputPath) {
         { value: `Heure départ: ${bon.heure_depart || ''}` }, { value: `DÉPLACEMENT ${bon.deplacement || ''}` },
       ] },
     ];
+    const expenseHeights = expenseRows.map((row) => adaptiveRowHeight(expenseColumns, row.cells, row.minimumHeight));
+    const expensesRequiredHeight = expenseHeights.reduce((sum, height) => sum + height, 0);
+    if (expensesY + expensesRequiredHeight > doc.page.height - 54) {
+      doc.addPage({ size: 'A4', margin: 0 });
+      drawHeader();
+      doc.fillColor(black).font('Helvetica-Bold').fontSize(10)
+        .text('FRAIS ET DÉPLACEMENT', left, pt(2.2), { width, align: 'center' });
+      expensesY = pt(2.55);
+    }
     let expenseBottom = expensesY;
     expenseRows.forEach((row) => {
       expenseBottom = drawAdaptiveRow(left, expenseBottom, expenseColumns, row.cells, row.minimumHeight).bottom;
@@ -554,37 +576,6 @@ async function generatePdf(bon, outputPath) {
     }
     drawCell(left, legalY, width, legalHeight, legalText, { size: 6, padding: 4 });
 
-    if (items.length > 2) {
-      doc.addPage({ size: 'A4', margin: 0 });
-      drawHeader();
-      doc.fillColor(black).font('Helvetica-Bold').fontSize(10)
-        .text('PIÈCES ET FOURNITURES - SUITE', left, pt(2.2), { width, align: 'center' });
-      const continuation = items.slice(2);
-      const columns = [61.1, 260.1, 40.4, 47.8, 77.85];
-      const labels = ['CODE', 'DÉSIGNATION', 'PRIX', 'QTÉ', 'TOTAL H.T.'];
-      let cursorY = pt(2.55);
-      const continuationHeader = () => {
-        const header = drawAdaptiveRow(left, cursorY, columns, labels.map((label) => ({
-          value: label, options: { bold: true, align: 'center', size: 8, padding: 3 },
-        })), 18);
-        cursorY = header.bottom;
-      };
-      continuationHeader();
-      continuation.forEach((item) => {
-        const cells = [item.code || '', item.designation || '', money(item.unit_price), number(item.quantity), money(item.line_total)]
-          .map((value, index) => ({ value, options: { align: index >= 2 ? 'right' : 'left', size: 8 } }));
-        const requiredHeight = adaptiveRowHeight(columns, cells, 28);
-        if (cursorY + requiredHeight > pageBottom) {
-          doc.addPage({ size: 'A4', margin: 0 });
-          drawHeader();
-          doc.fillColor(black).font('Helvetica-Bold').fontSize(10)
-            .text('PIÈCES ET FOURNITURES - SUITE', left, pt(2.2), { width, align: 'center' });
-          cursorY = pt(2.55);
-          continuationHeader();
-        }
-        cursorY = drawAdaptiveRow(left, cursorY, columns, cells, 28).bottom;
-      });
-    }
     doc.end();
   });
 }
