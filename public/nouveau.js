@@ -184,7 +184,11 @@ function controlMarkup(field, index) {
   const primaryClient = isClientField(field) ? ' data-role="client" autocomplete="organization"' : '';
   const defaultDate = /fa-calendar/.test(icon) && /date|heure|intervention du|appel du/i.test(field.label || '') ? ` value="${localDateTimeValue()}"` : '';
   if (/fa-gavel/.test(icon)) return `<div class="field span-2 signature-field" data-signature-field="${fieldId}"><label>${label} ${description}</label><div class="signature-pad"><canvas class="signatureCanvas" data-kizeo="${fieldId}" aria-label="${label}"></canvas><div class="signature-actions"><button class="btn btn-ghost btn-small clear-signature" data-target="${fieldId}" type="button">Effacer</button></div></div><div class="hint">Zone de signature liée au PDF de ce bon.</div></div>`;
-  if (/fa-photo|fa-file-image/.test(icon)) return `<div class="field span-2"><label>${label} ${description}</label><input class="photo-upload" data-kizeo-photo="${fieldId}" type="file" accept="image/*" capture="environment" multiple><div class="hint">Les photos de ce champ seront jointes au PDF client.</div></div>`;
+  // Les champs « image fixe » de Kizeo correspondent aux logos et en-têtes
+  // du modèle. Ils sont déjà visibles dans l'en-tête de l'application et ne
+  // doivent pas devenir une pièce jointe à demander au technicien.
+  if (/fa-file-image/.test(icon)) return '';
+  if (/fa-photo/.test(icon)) return `<div class="field span-2"><label>${label} ${description}</label><input class="photo-upload" data-kizeo-photo="${fieldId}" type="file" accept="image/*" capture="environment" multiple><div class="hint">Les photos de ce champ seront jointes au PDF client.</div></div>`;
   if (/fa-square-check/.test(icon)) return `<label class="checkbox compact-check kizeo-check"><input data-kizeo="${fieldId}" type="checkbox" value="1"><span>${label} ${description}</span></label>`;
   if (/fa-circle-check/.test(icon)) {
     if (/nom|technicien|formateur|client|machine|marque|type mat[eé]riel/i.test(field.label || '')) return `<div class="field"><label>${label} ${description}</label><input data-kizeo="${fieldId}" type="text"${primaryClient}></div>`;
