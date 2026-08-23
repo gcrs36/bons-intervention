@@ -194,6 +194,30 @@ input::placeholder, textarea::placeholder { color: #99a9b4; }
 .kizeo-table-columns { padding: 0 4px 5px; color: var(--muted); font-size: 9px; font-weight: 750; }
 .kizeo-table-row { margin-top: 6px; }
 .kizeo-table-row input { min-height: 37px; padding: 7px 8px; }
+.kizeo-form { overflow: hidden; border-color: #b9c3c9; }
+.kizeo-sheet-head { min-height: 116px; padding: 22px 28px; display: flex; align-items: center; gap: 22px; border-bottom: 2px solid #121212; background: #fff; }
+.kizeo-sheet-head img { width: 112px; height: 72px; object-fit: contain; object-position: left center; }
+.kizeo-sheet-head p { margin: 0 0 4px; color: var(--muted); font-size: 9px; font-weight: 850; letter-spacing: .08em; }
+.kizeo-sheet-head h2 { margin: 0; color: #111; font-size: clamp(20px, 3vw, 30px); letter-spacing: -.02em; }
+.kizeo-sheet-head span { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
+.kizeo-sheet-body { padding: 20px 28px 28px; }
+.kizeo-section { min-height: 38px; margin: 24px 0 15px; display: flex; align-items: stretch; border: 1px solid #171717; background: #fff; }
+.kizeo-section span { width: 36px; display: grid; place-items: center; color: white; background: #171717; font-size: 11px; font-weight: 850; }
+.kizeo-section h3 { flex: 1; margin: 0; padding: 8px 12px; color: #111; text-align: center; font-size: 15px; }
+.kizeo-grid { gap: 14px 18px; }
+.kizeo-form .field label { color: #111; font-weight: 800; }
+.kizeo-form input, .kizeo-form textarea, .kizeo-form select { border-radius: 3px; border-color: #aeb8bd; }
+.source-required { display: inline-grid; place-items: center; width: 16px; height: 16px; margin-left: 4px; border-radius: 50%; color: white; background: #1a1a1a; font-size: 8px; vertical-align: 1px; }
+.kizeo-check { border: 1px solid var(--line); background: #fff; }
+.kizeo-form .kizeo-table { margin: 18px 0; padding: 16px; border-radius: 3px; border-color: #171717; background: #fff; }
+.kizeo-form .kizeo-table-head h3 { margin: 0; color: #111; font-size: 15px; }
+.kizeo-form .kizeo-table-head p { margin: 3px 0 0; color: var(--muted); font-size: 10px; }
+.kizeo-form .kizeo-table-columns, .kizeo-form .kizeo-table-row { min-width: 640px; grid-template-columns: repeat(calc(var(--kizeo-columns) - 1), minmax(105px, 1fr)) 34px; }
+.kizeo-form .kizeo-table-columns { padding: 9px 7px; color: white; background: #171717; border-radius: 3px 3px 0 0; }
+.kizeo-form .kizeo-table-row { padding: 0; }
+.kizeo-form .kizeo-table-row input { border-radius: 3px; }
+.signature-field { padding: 15px; border: 1px solid #171717; border-radius: 3px; }
+.signature-field .signature-pad { border-color: #171717; border-radius: 3px; background: #fff; }
 .source-table-link { padding: 12px 14px; display: flex; justify-content: space-between; gap: 18px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); font-size: 10px; }
 .source-table-link strong { color: var(--ink); }
 .option-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
