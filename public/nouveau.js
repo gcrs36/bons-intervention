@@ -2,16 +2,9 @@ const form = document.querySelector('#universalForm');
 const companyCards = document.querySelector('#companyCards');
 const typeCards = document.querySelector('#typeCards');
 const variantSelect = document.querySelector('#variantSelect');
-const familyFields = document.querySelector('#familyFields');
-const rowsContainer = document.querySelector('#itemRows');
+const formHost = document.querySelector('#familyFields');
 const itemsJson = document.querySelector('#itemsJson');
 const extraJson = document.querySelector('#extraJson');
-const grandTotal = document.querySelector('#grandTotal');
-const clientInput = document.querySelector('#clientInput');
-const clientResults = document.querySelector('#clientResults');
-const clientHint = document.querySelector('#clientHint');
-const dolibarrThirdpartyId = document.querySelector('#dolibarrThirdpartyId');
-const clientRequestId = document.querySelector('#clientRequestId');
 const toast = document.querySelector('#toast');
 const money = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
 
@@ -20,8 +13,8 @@ let selectedCompany = 'gcrs';
 let selectedType = '';
 let dolibarrConfigured = false;
 let searchTimer;
-let rowCounter = 0;
-const signatureState = { client: false, tech: false };
+let activeClientInput = null;
+const signatureState = {};
 const companyOrder = ['gcrs', 'dimensions', 'esi', 'abeg', 'arboreal', 'clementz'];
 const companyDescriptions = {
   gcrs: '15 formulaires terrain, atelier, commerce et frais',
@@ -30,6 +23,17 @@ const companyDescriptions = {
   abeg: 'Intervention technique et visite massicot',
   arboreal: 'Intervention et visite massicot ARBOREAL',
   clementz: 'Contrat d’intervention Clementz',
+};
+const canonical = {
+  date: document.querySelector('#canonicalDate'), client: document.querySelector('#canonicalClient'),
+  reference: document.querySelector('#canonicalReference'), phone: document.querySelector('#canonicalPhone'),
+  mail: document.querySelector('#canonicalMail'), address: document.querySelector('#canonicalAddress'),
+  machine: document.querySelector('#canonicalMachine'), serial: document.querySelector('#canonicalSerial'),
+  bonDe: document.querySelector('#canonicalBonDe'), work: document.querySelector('#canonicalWork'),
+  duration: document.querySelector('#canonicalDuration'), technician: document.querySelector('#canonicalTechnician'),
+  signatory: document.querySelector('#canonicalSignatory'), arrival: document.querySelector('#canonicalArrival'),
+  departure: document.querySelector('#canonicalDeparture'), travel: document.querySelector('#canonicalTravel'),
+  agreement: document.querySelector('#canonicalAgreement'),
 };
 
 function localDateTimeValue(date = new Date()) {
@@ -40,21 +44,17 @@ function localDateTimeValue(date = new Date()) {
   return new Date(rounded.getTime() - offset).toISOString().slice(0, 16);
 }
 
-document.querySelector('#dateHeureInput').value = localDateTimeValue();
-clientRequestId.value = window.OfflineStore?.createId() || window.crypto?.randomUUID?.() || `request-${Date.now()}`;
+document.querySelector('#clientRequestId').value = window.OfflineStore?.createId() || window.crypto?.randomUUID?.() || `request-${Date.now()}`;
 
 async function initialize() {
   try {
     const [typesResponse, configResponse] = await Promise.all([fetch('/api/bon-types'), fetch('/api/config')]);
     if (!typesResponse.ok) throw new Error('Les modèles de bons sont indisponibles.');
     schemas = await typesResponse.json();
-    const config = configResponse.ok ? await configResponse.json() : {};
-    configureDolibarr(config);
+    configureDolibarr(configResponse.ok ? await configResponse.json() : {});
     const parameters = new URLSearchParams(location.search);
     renderCompanyCards();
     selectCompany(parameters.get('societe') || parameters.get('variante') || 'gcrs', parameters.get('type'));
-    addItem();
-    setupSignatures();
   } catch (error) {
     showToast(error.message, true);
     document.querySelector('#submitButton').disabled = true;
@@ -68,10 +68,7 @@ function renderCompanyCards() {
     const mark = company.logo
       ? `<span class="company-card-logo"><img src="${escapeAttr(company.logo)}" alt="Logo ${escapeAttr(company.label)}"></span>`
       : `<span class="company-card-mark">${escapeHtml(company.label.slice(0, 3))}</span>`;
-    return `<button class="company-card" type="button" data-company="${escapeAttr(companyId)}" style="--company-color:${escapeAttr(company.color)}">
-      ${mark}
-      <span><strong>${escapeHtml(company.label)}</strong><small>${escapeHtml(companyDescriptions[companyId] || `${count} formulaire(s) disponible(s)`)}</small><em>${count} bon${count > 1 ? 's' : ''}</em></span>
-    </button>`;
+    return `<button class="company-card" type="button" data-company="${escapeAttr(companyId)}" style="--company-color:${escapeAttr(company.color)}">${mark}<span><strong>${escapeHtml(company.label)}</strong><small>${escapeHtml(companyDescriptions[companyId] || `${count} formulaire(s) disponible(s)`)}</small><em>${count} bon${count > 1 ? 's' : ''}</em></span></button>`;
   }).join('');
 }
 
@@ -87,577 +84,383 @@ function selectCompany(companyId, preferredType) {
 
 function renderTypeCards() {
   typeCards.innerHTML = Object.values(schemas.types).filter((type) => type.variants.includes(selectedCompany)).map((type) => `
-    <button class="type-card" type="button" data-type="${escapeAttr(type.id)}">
-      <span class="type-card-icon">${typeIcon(type.family)}</span>
-      <span><strong>${escapeHtml(type.label)}</strong><small>${escapeHtml(type.description)}</small><em>PDF ${escapeHtml(schemas.variants[selectedCompany].label)}</em></span>
-    </button>`).join('');
+    <button class="type-card" type="button" data-type="${escapeAttr(type.id)}"><span class="type-card-icon">${typeIcon(type.family)}</span><span><strong>${escapeHtml(type.label)}</strong><small>${escapeHtml(type.description)}</small><em>Modèle Kizeo n° ${escapeHtml(type.kizeoId)}</em></span></button>`).join('');
 }
 
 function selectType(typeId) {
   const definition = schemas.types[typeId]?.variants.includes(selectedCompany)
-    ? schemas.types[typeId]
-    : Object.values(schemas.types).find((type) => type.variants.includes(selectedCompany));
+    ? schemas.types[typeId] : Object.values(schemas.types).find((type) => type.variants.includes(selectedCompany));
   selectedType = definition.id;
   document.querySelector('#bonTypeInput').value = definition.id;
-  [...typeCards.querySelectorAll('.type-card')].forEach((card) => card.classList.toggle('selected', card.dataset.type === definition.id));
+  document.querySelector('#bonVariantInput').value = selectedCompany;
   variantSelect.innerHTML = `<option value="${escapeAttr(selectedCompany)}">${escapeHtml(schemas.variants[selectedCompany].label)}</option>`;
-  variantSelect.value = selectedCompany;
+  [...typeCards.querySelectorAll('.type-card')].forEach((card) => card.classList.toggle('selected', card.dataset.type === definition.id));
   document.querySelector('#pageTitle').textContent = `${schemas.variants[selectedCompany].label} — ${definition.label}`;
-  document.querySelector('#pageLead').textContent = `Formulaire ${schemas.variants[selectedCompany].label} : les champs saisis déterminent la mise en page du PDF choisi.`;
+  document.querySelector('#pageLead').textContent = `Formulaire et PDF spécifiques au modèle Kizeo n° ${definition.kizeoId}.`;
   document.querySelector('#summaryType').textContent = definition.label;
+  document.querySelector('#summaryVariant').textContent = schemas.variants[selectedCompany].label;
+  document.querySelector('.summary-head').style.background = schemas.variants[selectedCompany].color;
   document.querySelector('#syncInput').checked = Boolean(definition.syncDefault && dolibarrConfigured);
   const url = new URL(window.location.href);
-  url.searchParams.set('societe', selectedCompany);
-  url.searchParams.set('type', definition.id);
-  url.searchParams.delete('variante');
+  url.searchParams.set('societe', selectedCompany); url.searchParams.set('type', definition.id); url.searchParams.delete('variante');
   window.history.replaceState({}, '', url);
-  updateVariant();
+  renderKizeoForm(definition, schemas.variants[selectedCompany]);
 }
 
-function updateVariant() {
-  const definition = schemas.types[selectedType];
-  const variant = schemas.variants[variantSelect.value];
-  const family = definition.family || definition.id;
-  const hasClientSignature = definition.fields?.some((sourceField) => /fa-gavel/.test(sourceField.icon || '')) && family !== 'fiche_machine';
-  document.querySelector('#bonVariantInput').value = variant.id;
-  document.querySelector('#summaryVariant').textContent = variant.label;
-  document.querySelector('.summary-head').style.background = variant.color;
-  const hasPartsTable = ['intervention', 'livraison', 'commande', 'devis', 'contrat'].includes(family)
-    || definition.fields?.some((sourceField) => /fa-table/.test(sourceField.icon || '') && /pi[eè]ce|fourniture|mat[eé]riel|prestation/i.test(sourceField.label));
-  document.querySelector('#itemsCard').hidden = !hasPartsTable;
-  document.querySelector('#machineInput').required = ['intervention', 'visite_massicot', 'livraison'].includes(family);
-  document.querySelector('#machineRequired').hidden = !document.querySelector('#machineInput').required;
-  const signatureRequired = Boolean(hasClientSignature);
-  document.querySelector('#signatoryInput').required = signatureRequired;
-  document.querySelector('#signatoryRequired').hidden = !signatureRequired;
-  const agreementRequired = family === 'intervention' && definition.fields?.some((sourceField) => sourceField.id === 'bon_pour_accord');
-  document.querySelector('#agreementRow').hidden = !agreementRequired;
-  document.querySelector('#agreementInput').required = Boolean(agreementRequired);
-  document.querySelector('#technicianLabel').textContent = family === 'mise_en_service' ? 'Formateur *' : 'Technicien *';
-  document.querySelector('#signatureHint').textContent = signatureRequired ? 'Signature client requise par le formulaire Kizeo.' : 'Signature client facultative pour ce formulaire.';
-  document.querySelector('#signatureHint').style.color = '';
-  renderFamilyFields(definition, variant);
-}
-
-function renderFamilyFields(definition, variant) {
-  familyFields.innerHTML = kizeoSourceFields(definition, variant);
-  bindFamilyEvents();
-}
-
-const CORE_SOURCE_FIELDS = new Set([
-  'date_et_heure1', 'date', 'client', 'client_s_', 'client2', 'adresse', 'adresse_client', 'tel_', 'tel', 'mail',
-  'ref_cde_client', 'type_materiel_', 'n_de_matricule_', 'non_du_technicien', 'nom_du_signataire_', 'nom_du_signataire',
-  'signature1', 'signature2', 'signature3', 'signature_client', 'signature_technicien', 'photo', 'photo1', 'photo2', 'photos',
-]);
-
-function kizeoSourceFields(definition, variant) {
+function renderKizeoForm(definition, variant) {
+  Object.keys(signatureState).forEach((key) => delete signatureState[key]);
   const sourceFields = Array.isArray(definition.fields) ? definition.fields : [];
-  const controls = [];
+  let number = 0;
+  let html = `<section class="form-card kizeo-form kizeo-${escapeAttr(definition.family || 'document')}" style="--company-color:${escapeAttr(variant.color)}">
+    <div class="kizeo-sheet-head"><img src="${escapeAttr(variant.logo || '/logo-gcrs.png')}" alt="${escapeAttr(variant.label)}"><div><p>FORMULAIRE KIZEO N° ${escapeHtml(definition.kizeoId)}</p><h2>${escapeHtml(definition.label)}</h2><span>${escapeHtml(variant.label)} · les champs et sections suivent l’ordre du modèle d’origine.</span></div></div>
+    <div class="kizeo-sheet-body">`;
+  let openGrid = false;
+  const closeGrid = () => { if (openGrid) { html += '</div>'; openGrid = false; } };
+  const open = () => { if (!openGrid) { html += '<div class="form-grid kizeo-grid">'; openGrid = true; } };
+
   for (let index = 0; index < sourceFields.length; index += 1) {
     const sourceField = sourceFields[index];
     const icon = sourceField.icon || '';
-    if (/fa-file-image|fa-photo|fa-gavel/.test(icon) || CORE_SOURCE_FIELDS.has(sourceField.id)) continue;
     if (/fa-bookmark/.test(icon)) {
-      controls.push(`<div class="span-2 kizeo-section-heading"><span>${escapeHtml(sourceField.label)}</span></div>`);
+      closeGrid();
+      const label = /s[eé]parateur/i.test(sourceField.label) ? 'Informations complémentaires' : sourceField.label;
+      number += 1;
+      html += `<div class="kizeo-section"><span>${number}</span><h3>${escapeHtml(label)}</h3></div>`;
       continue;
     }
     if (/fa-table/.test(icon)) {
-      const columns = [];
-      let cursor = index + 1;
-      while (cursor < sourceFields.length && !/fa-bookmark|fa-table/.test(sourceFields[cursor].icon || '')) {
-        const column = sourceFields[cursor];
-        if (!/fa-photo|fa-gavel|fa-file-image/.test(column.icon || '')) columns.push(column);
-        cursor += 1;
-      }
-      if (/pi[eè]ce|fourniture|mat[eé]riel/i.test(sourceField.label)) {
-        controls.push(`<div class="span-2 source-table-link"><strong>${escapeHtml(sourceField.label)}</strong><span>Le tableau dynamique correspondant se trouve dans « Pièces et fournitures » ci-dessous.</span></div>`);
-      } else {
-        controls.push(kizeoTable(sourceField, columns.slice(0, 8)));
-      }
+      closeGrid();
+      const { columns, cursor } = tableColumns(sourceFields, index);
+      html += tableMarkup(sourceField, columns);
       index = cursor - 1;
       continue;
     }
-    controls.push(kizeoControl(sourceField));
+    open();
+    html += controlMarkup(sourceField, index);
   }
-  return `<section class="form-card kizeo-source-form" style="--company-color:${escapeAttr(variant.color)}">
-    <div class="form-card-head"><span class="form-card-number">5</span><div><h2>${escapeHtml(definition.label)}</h2><p class="section-help">Structure reprise du formulaire Kizeo n° ${escapeHtml(definition.kizeoId)} · ${sourceFields.length} champs dans l’ordre d’origine.</p></div></div>
-    <div class="source-form-note"><img src="${escapeAttr(variant.logo || '/logo-gcrs.png')}" alt=""><span>Modèle ${escapeHtml(variant.label)} · les zones de texte et les tableaux grandissent avec leur contenu.</span></div>
-    <div class="form-card-body form-grid">${controls.join('')}</div>
-  </section>`;
+  closeGrid();
+  html += `</div></section>`;
+  formHost.innerHTML = html;
+  bindKizeoForm(definition);
+  updateSummary();
 }
 
-function kizeoControl(sourceField) {
-  const icon = sourceField.icon || '';
-  const required = sourceField.required ? ' data-kizeo-required="1"' : '';
-  const label = `${escapeHtml(sourceField.label)}${sourceField.required ? ' *' : ''}`;
-  const workField = /travail effectue|travail effectué|details de l.intervention|détails de l.intervention/i.test(sourceField.label);
-  if (/fa-square-check/.test(icon)) return `<label class="checkbox compact-check"><input data-extra="${escapeAttr(sourceField.id)}" type="checkbox" value="1"><span>${label}</span></label>`;
+function tableColumns(sourceFields, startIndex) {
+  // The Kizeo export only exposes the table container for commercial
+  // prestations (its inner columns are not represented as normal fields).
+  // Recreate the visible operational columns without swallowing the fields
+  // that follow the table in the original form.
+  if (/prestation/i.test(sourceFields[startIndex]?.label || '')) {
+    return {
+      columns: [
+        { id: 'designation', label: 'Prestation' },
+        { id: 'quantite', label: 'Quantité' },
+        { id: 'prix_ht', label: 'Prix HT' },
+        { id: 'total_ht', label: 'Total HT' },
+      ],
+      cursor: startIndex + 1,
+    };
+  }
+  const columns = [];
+  let cursor = startIndex + 1;
+  while (cursor < sourceFields.length && !/fa-bookmark|fa-table/.test(sourceFields[cursor].icon || '')) {
+    const candidate = sourceFields[cursor];
+    const label = String(candidate.label || '');
+    if (/fa-photo|fa-gavel|fa-file-image/.test(candidate.icon || '')) break;
+    if (columns.length && /type.*intervention|validation|date|heure|signature|technicien|signataire/i.test(label)) break;
+    columns.push(candidate);
+    cursor += 1;
+    if (/total\s*(h\.?t\.?|ttc)?/i.test(label) || columns.length >= 5) break;
+  }
+  return { columns: columns.length ? columns : [{ id: 'ligne', label: 'Ligne' }], cursor };
+}
+
+function controlMarkup(field, index) {
+  const icon = field.icon || '';
+  const fieldId = escapeAttr(field.id);
+  const label = escapeHtml(field.label || 'Champ');
+  const description = field.required ? '<span class="source-required" title="Champ requis dans Kizeo">K</span>' : '';
+  const long = /d[eé]tail|travail|observ|comment|motif|rem[eè]de|adresse|rapport|description|condition|anomal/i.test(field.label || '') || /fa-align-left|fa-house|fa-paragraph/.test(icon);
+  const primaryClient = isClientField(field) ? ' data-role="client" autocomplete="organization"' : '';
+  const defaultDate = /fa-calendar/.test(icon) && /date|heure|intervention du|appel du/i.test(field.label || '') ? ` value="${localDateTimeValue()}"` : '';
+  if (/fa-gavel/.test(icon)) return `<div class="field span-2 signature-field" data-signature-field="${fieldId}"><label>${label} ${description}</label><div class="signature-pad"><canvas class="signatureCanvas" data-kizeo="${fieldId}" aria-label="${label}"></canvas><div class="signature-actions"><button class="btn btn-ghost btn-small clear-signature" data-target="${fieldId}" type="button">Effacer</button></div></div><div class="hint">Zone de signature liée au PDF de ce bon.</div></div>`;
+  if (/fa-photo|fa-file-image/.test(icon)) return `<div class="field span-2"><label>${label} ${description}</label><input class="photo-upload" data-kizeo-photo="${fieldId}" type="file" accept="image/*" capture="environment" multiple><div class="hint">Les photos de ce champ seront jointes au PDF client.</div></div>`;
+  if (/fa-square-check/.test(icon)) return `<label class="checkbox compact-check kizeo-check"><input data-kizeo="${fieldId}" type="checkbox" value="1"><span>${label} ${description}</span></label>`;
   if (/fa-circle-check/.test(icon)) {
-    const knownChoices = {
-      bon_de: ['Dépannage', 'Entretien', 'Installation', 'Formation', 'Mise en service', 'Visite'],
-      nombre_de_passage: ['1', '2', '3', '4 et plus'],
-      nombre_passage: ['1', '2', '3', '4 et plus'],
-      types_d_intervention: ['Curatif', 'Préventif', 'Installation', 'Formation', 'Diagnostic'],
-    }[sourceField.id] || ['Oui', 'Non', 'Non applicable', 'Autre'];
-    const listId = `choices-${sourceField.id}`;
-    return `<div class="field"><label>${label}</label><input data-extra="${escapeAttr(sourceField.id)}"${sourceField.id === 'bon_de' ? ' name="bon_de"' : ''} type="text" list="${escapeAttr(listId)}" placeholder="Choisir ou saisir…"${required}><datalist id="${escapeAttr(listId)}">${knownChoices.map((choice) => `<option value="${escapeAttr(choice)}"></option>`).join('')}</datalist></div>`;
+    if (/nom|technicien|formateur|client|machine|marque|type mat[eé]riel/i.test(field.label || '')) return `<div class="field"><label>${label} ${description}</label><input data-kizeo="${fieldId}" type="text"${primaryClient}></div>`;
+    const choices = fieldChoices(field);
+    return `<div class="field"><label>${label} ${description}</label><select data-kizeo="${fieldId}">${choices.map((choice) => `<option value="${escapeAttr(choice)}">${escapeHtml(choice || 'Sélectionner…')}</option>`).join('')}</select></div>`;
   }
-  if (/fa-calendar/.test(icon)) return `<div class="field"><label>${label}</label><input data-extra="${escapeAttr(sourceField.id)}" type="datetime-local" step="300"${required}></div>`;
-  if (/fa-align-left|fa-house/.test(icon) || workField) return `<div class="field span-2"><label>${label}</label><textarea data-extra="${escapeAttr(sourceField.id)}"${workField ? ' name="travail_effectue"' : ''} rows="3"${required}></textarea></div>`;
-  const type = /calculator|square-plus/.test(icon) ? 'number' : 'text';
-  return `<div class="field"><label>${label}</label><input data-extra="${escapeAttr(sourceField.id)}" type="${type}"${type === 'number' ? ' step="0.01"' : ''}${required}></div>`;
+  if (/fa-calendar/.test(icon)) return `<div class="field"><label>${label} ${description}</label><input data-kizeo="${fieldId}" type="datetime-local" step="300"${defaultDate}></div>`;
+  if (long) return `<div class="field span-2"><label>${label} ${description}</label><textarea data-kizeo="${fieldId}" rows="${/d[eé]tail|travail|rapport|observ/i.test(field.label || '') ? 5 : 3}"></textarea></div>`;
+  const isNumber = /calculator|square-plus/.test(icon) || /quantit[eé]|compteur|km|prix|total|co[uû]t|montant|heure|passage/i.test(field.label || '');
+  const type = /mail/i.test(field.label || '') ? 'email' : (/t[eé]l/i.test(field.label || '') ? 'tel' : (isNumber ? 'number' : 'text'));
+  return `<div class="field"><label>${label} ${description}</label><input data-kizeo="${fieldId}" type="${type}"${isNumber ? ' min="0" step="0.01"' : ''}${primaryClient}></div>`;
 }
 
-function kizeoTable(sourceField, columns) {
+function tableMarkup(field, columns) {
   const safeColumns = columns.length ? columns : [{ id: 'ligne', label: 'Ligne' }];
-  return `<div class="span-2 kizeo-table" data-kizeo-table="${escapeAttr(sourceField.id)}">
-    <div class="kizeo-table-head"><div><strong>${escapeHtml(sourceField.label)}</strong><small>Tableau dynamique du formulaire Kizeo</small></div><button class="btn btn-secondary btn-small add-kizeo-row" type="button">＋ Ajouter une ligne</button></div>
-    <div class="kizeo-table-columns" style="--kizeo-columns:${safeColumns.length}">${safeColumns.map((column) => `<span>${escapeHtml(column.label)}</span>`).join('')}</div>
-    <div class="kizeo-table-rows" data-columns='${escapeAttr(JSON.stringify(safeColumns.map(({ id, label }) => ({ id, label }))))}'></div>
-  </div>`;
+  return `<section class="kizeo-table" data-kizeo-table="${escapeAttr(field.id)}"><div class="kizeo-table-head"><div><h3>${escapeHtml(field.label)}</h3><p>Tableau dynamique du modèle Kizeo</p></div><button class="btn btn-secondary btn-small add-kizeo-row" type="button">＋ Ajouter une ligne</button></div><div class="kizeo-table-columns" style="--kizeo-columns:${safeColumns.length + 1}">${safeColumns.map((column) => `<span>${escapeHtml(column.label)}</span>`).join('')}<span aria-hidden="true"></span></div><div class="kizeo-table-rows" data-columns="${escapeAttr(JSON.stringify(safeColumns.map(({ id, label }) => ({ id, label }))))}"></div></section>`;
 }
 
-function interventionFields(variant) {
-  const esiDays = variant === 'esi' ? `<div class="span-2 day-list"><h3>Rapports sur plusieurs jours</h3>${Array.from({ length: 5 }, (_, index) => dayFields(index + 1)).join('')}</div>` : '';
-  const variantSpecific = {
-    gcrs: field('Véhicule', 'vehicule') + field('Compteur kilométrique', 'compteur_km', 'number'),
-    abeg: field('Nom client ABEG', 'nom_client_abeg') + field('Compteur', 'compteur'),
-    arboreal: selectField('Nombre de passages', 'nombre_passage', ['', '1', '2', '3', '4 et plus']) + field('Compteur', 'compteur'),
-    dimensions: field('Compteur', 'compteur') + field('Déplacement', 'deplacement_detail'),
-    esi: field('Références ESI', 'reference_esi') + field('Demande de', 'demande_de'),
-  }[variant] || '';
-  return `<section class="form-card">
-    <div class="form-card-head"><span class="form-card-number">5</span><div><h2>Bon d’intervention ${escapeHtml(schemas.variants[variant].label)}</h2><p class="section-help">Les champs correspondent au modèle PDF ${escapeHtml(schemas.variants[variant].label)}.</p></div></div>
-    <div class="form-card-body form-grid">
-      ${selectNamedField('Bon de *', 'bon_de', ['Dépannage', 'Entretien', 'Installation', 'Formation', 'Mise en service', 'Visite'], true)}
-      ${selectField("Type d’intervention", 'intervention_type', ['', 'Curatif', 'Préventif', 'Installation', 'Formation', 'Diagnostic'])}
-      ${field('Panne signalée', 'panne_signalee', 'textarea', true)}
-      <div class="field span-2"><label for="workInput">Travail effectué *</label><textarea id="workInput" name="travail_effectue" rows="5" required></textarea></div>
-      ${variantSpecific}
-      <div class="field span-2 option-grid">
-        ${checkField('Intervention à suivre', 'intervention_a_suivre')}
-        ${checkField('Sous contrat', 'sous_contrat')}
-        ${checkField('Sous garantie', 'sous_garantie')}
-        ${checkField('Fonctionnement validé', 'validation_fonctionnement')}
-      </div>
-      ${esiDays}
-      <div class="span-2 expense-grid">
-        ${namedField("Heure d’arrivée", 'heures_d_arrivee', 'time', false, 'arrivalInput')}
-        ${namedField('Heure de départ', 'heure_depart', 'time', false, 'departureInput')}
-        ${namedField('Temps passé', 'temps_passe', 'text', false, 'durationInput')}
-        ${namedField('Déplacement', 'deplacement')}
-        ${namedField('Kilomètres', 'km', 'number')}
-        ${namedField('Repas', 'repas', 'number')}
-        ${namedField('Hôtel', 'hotel', 'number')}
-        ${namedField('Autoroute / péages (€)', 'autoroute', 'number')}
-      </div>
-      ${field('Divers / fournitures', 'divers', 'textarea', true)}
-      ${field('Note confidentielle interne', 'note_confidentielle', 'textarea', true)}
-    </div>
-  </section>`;
+function fieldChoices(field) {
+  const key = field.id;
+  const label = String(field.label || '').toLowerCase();
+  if (key === 'bon_de') return ['', 'Dépannage', 'Entretien', 'Installation', 'Formation', 'Mise en service', 'Visite'];
+  if (/conformit[eé]|validation|[eé]tat|contr[oô]le|stabilit[eé]|fonctionnement|protection|arr[eê]t|usure|changement.*lame/.test(label)) return ['', 'Bon', 'Mauvais', 'Inexistant', 'Non applicable'];
+  if (/type.*intervention/.test(label)) return ['', 'Curatif', 'Préventif', 'Installation', 'Formation', 'Diagnostic'];
+  if (/nombre.*passage/.test(label)) return ['', '1', '2', '3', '4 et plus'];
+  if (/oui|livr[eé]|accord|factur|garantie|contrat/.test(label)) return ['', 'Oui', 'Non', 'Non applicable'];
+  return ['', 'Oui', 'Non', 'Non applicable', 'Autre'];
 }
 
-function dayFields(day) {
-  return `<details class="day-card" data-day="${day}" ${day === 1 ? 'open' : ''}><summary>Jour ${day}</summary><div class="form-grid">
-    <div class="field"><label>Date</label><input data-day-field="date" type="date"></div>
-    <div class="field"><label>Main-d’œuvre sur site</label><input data-day-field="on_site" placeholder="ex. 07h30"></div>
-    <div class="field"><label>Nombre de déplacements</label><input data-day-field="trips" type="number" min="0" step="1"></div>
-    <div class="field"><label>Trajet aller</label><input data-day-field="outbound" placeholder="ex. 01h15"></div>
-    <div class="field"><label>Trajet retour</label><input data-day-field="return" placeholder="ex. 01h10"></div>
-    <div class="field"><label>Kilomètres A/R</label><input data-day-field="km" type="number" min="0" step="1"></div>
-    <div class="field"><label>Péages</label><input data-day-field="tolls" type="number" min="0" step="0.01"></div>
-    <div class="field"><label>Parking</label><input data-day-field="parking" type="number" min="0" step="0.01"></div>
-    <div class="field"><label>Repas</label><input data-day-field="meals" type="number" min="0" step="1"></div>
-    <div class="field"><label>Hôtel</label><input data-day-field="hotel" type="number" min="0" step="1"></div>
-    <div class="field span-2"><label>Rapport du jour</label><textarea data-day-field="report" rows="4"></textarea></div>
-  </div></details>`;
+function isClientField(field) {
+  const label = String(field.label || '').toLowerCase();
+  return /^(client\(s\)|client|soci[eé]t[eé]|raison sociale)$/i.test(label) || field.id === 'client';
 }
 
-function massicotFields(checklist) {
-  const rows = checklist.map((item) => `${item.groupLabel ? `<div class="check-group"><strong>${escapeHtml(item.group)} — ${escapeHtml(item.groupLabel)}</strong></div>` : ''}
-    <div class="check-row" data-code="${escapeAttr(item.code)}" data-group="${escapeAttr(item.group)}" data-group-label="${escapeAttr(item.groupLabel || '')}" data-label="${escapeAttr(item.label)}">
-      <div class="check-label"><strong>${escapeHtml(item.code)}</strong><span>${escapeHtml(item.label)}</span></div>
-      <select class="check-state" aria-label="État ${escapeAttr(item.code)}">${schemas.checklistStates.map((state) => `<option>${escapeHtml(state)}</option>`).join('')}</select>
-      <input class="check-comment" type="text" aria-label="Observation ${escapeAttr(item.code)}" placeholder="Observation si nécessaire">
-    </div>`).join('');
-  return `<section class="form-card">
-    <div class="form-card-head"><span class="form-card-number">5</span><div><h2>Visite trimestrielle massicot ${escapeHtml(schemas.variants[selectedCompany].label)}</h2><p class="section-help">Le formulaire et le PDF reprennent les 42 points A1 à D38 de ce bon.</p></div></div>
-    <div class="form-card-body form-grid">
-      ${selectField('Trimestre *', 'trimestre', ['1er trimestre', '2e trimestre', '3e trimestre', '4e trimestre'], false, true)}
-      ${field('N° identification', 'numero_identification')}
-      ${field('Marque', 'marque')}${field('Type', 'type_machine')}
-    </div>
-    <div class="checklist-editor">${rows}</div>
-    <div class="form-card-body form-grid blade-fields">
-      ${selectField('Changement de lame', 'changement_lame', ['', 'Oui', 'Non', 'Impossible'])}
-      ${field('Taille de lame', 'taille_lame')}
-      ${selectField('État de la lame enlevée', 'etat_lame', ['', 'Bon', 'Moyen', 'Mauvais'])}
-      ${selectField('Usure de la lame', 'usure_lame', ['', 'Normale', 'Anormale'])}
-      ${field('Observation sur la lame', 'commentaire_lame', 'textarea', true)}
-      ${selectField("Conformité de l’équipement", 'conformite', ['', 'Conforme', 'Non conforme', 'Conforme avec réserves'], false, true)}
-      ${field('Non-conformités et actions recommandées', 'non_conformite', 'textarea', true)}
-      ${field('Fournitures', 'fournitures', 'textarea', true)}
-      ${field('Divers visible par le client', 'divers', 'textarea', true)}
-      ${field('Divers confidentiel', 'divers_confidentiel', 'textarea', true)}
-    </div>
-  </section>`;
-}
-
-function commissioningFields() {
-  return `<section class="form-card"><div class="form-card-head"><span class="form-card-number">5</span><div><h2>Mise en service et formation GCRS</h2><p class="section-help">Le formulaire reprend le procès-verbal GCRS issu de Kizeo.</p></div></div><div class="form-card-body form-grid">
-    ${field('Contact', 'contact')}${field('Supports de formation', 'supports_formation')}
-    ${field('Liste / intitulé de formation', 'liste_formation')}
-    ${field('Numéros de série', 'numeros_serie', 'textarea', true)}
-    <div class="field span-2"><label>Observations *</label><textarea name="travail_effectue" data-extra="observations" rows="5" required></textarea></div>
-    ${field('Présences à la formation', 'presences_formation', 'textarea', true)}
-  </div></section>`;
-}
-
-function machineSheetFields() {
-  return `<section class="form-card"><div class="form-card-head"><span class="form-card-number">5</span><div><h2>Fiche machine atelier GCRS</h2><p class="section-help">Réception, diagnostic et décision atelier au format GCRS.</p></div></div><div class="form-card-body form-grid">
-    ${field('Provenance', 'provenance')}${selectField('But', 'but', ['', 'Diagnostic', 'Réparation', 'Contrôle', 'Préparation', 'Autre'])}
-    ${field('Compteur', 'compteur', 'number')}${selectField('Issue', 'issue', ['', 'Réparée', 'À suivre', 'Non réparée', 'Retour client'])}
-    ${selectField('Devis', 'devis', ['', 'À faire', 'Envoyé', 'Accepté', 'Refusé', 'Sans objet'])}
-    ${selectField('Mise au rebut', 'mise_au_rebut', ['', 'Non', 'Oui', 'À décider'])}
-    <div class="field span-2"><label>Observations *</label><textarea name="travail_effectue" data-extra="observation" rows="5" required></textarea></div>
-    ${field('Actions réalisées', 'action_realisee', 'textarea', true)}
-  </div></section>`;
-}
-
-function field(label, key, type = 'text', full = false) {
-  const css = full ? 'field span-2' : 'field';
-  if (type === 'textarea') return `<div class="${css}"><label>${escapeHtml(label)}</label><textarea data-extra="${escapeAttr(key)}" rows="3"></textarea></div>`;
-  if (type === 'checkbox') return checkField(label, key);
-  return `<div class="${css}"><label>${escapeHtml(label)}</label><input data-extra="${escapeAttr(key)}" type="${type}"${type === 'number' ? ' step="0.01"' : ''}></div>`;
-}
-
-function namedField(label, name, type = 'text', required = false, id = '') {
-  return `<div class="field"><label${id ? ` for="${id}"` : ''}>${escapeHtml(label)}${required ? ' *' : ''}</label><input${id ? ` id="${id}"` : ''} name="${name}" type="${type}"${required ? ' required' : ''}${type === 'time' ? ' step="300"' : ''}${type === 'number' ? ' min="0" step="0.01"' : ''}></div>`;
-}
-
-function selectField(label, key, options, full = false, required = false) {
-  return `<div class="field${full ? ' span-2' : ''}"><label>${escapeHtml(label)}</label><select data-extra="${escapeAttr(key)}"${required ? ' required' : ''}>${options.map((option) => `<option value="${escapeAttr(option)}">${escapeHtml(option || 'Sélectionner…')}</option>`).join('')}</select></div>`;
-}
-
-function selectNamedField(label, name, options, required = false) {
-  return `<div class="field"><label>${escapeHtml(label)}</label><select name="${name}"${required ? ' required' : ''}>${options.map((option) => `<option value="${escapeAttr(option)}">${escapeHtml(option)}</option>`).join('')}</select></div>`;
-}
-
-function checkField(label, key) {
-  return `<label class="checkbox compact-check"><input data-extra="${escapeAttr(key)}" type="checkbox" value="1"><span>${escapeHtml(label)}</span></label>`;
-}
-
-function bindFamilyEvents() {
-  const arrival = document.querySelector('#arrivalInput');
-  const departure = document.querySelector('#departureInput');
-  if (arrival) arrival.value = new Date().toTimeString().slice(0, 5);
-  if (arrival && departure) {
-    arrival.addEventListener('change', updateDuration);
-    departure.addEventListener('change', updateDuration);
+function bindKizeoForm(definition) {
+  formHost.querySelectorAll('.kizeo-table').forEach((table) => addTableRow(table));
+  formHost.querySelectorAll('.add-kizeo-row').forEach((button) => button.addEventListener('click', () => addTableRow(button.closest('.kizeo-table'))));
+  formHost.querySelectorAll('.signatureCanvas').forEach((canvas) => setupSignatureCanvas(canvas));
+  formHost.querySelectorAll('.clear-signature').forEach((button) => button.addEventListener('click', () => clearSignature(button.dataset.target)));
+  formHost.querySelectorAll('[data-role="client"]').forEach((input) => {
+    input.addEventListener('focus', () => { activeClientInput = input; });
+    input.addEventListener('input', () => { activeClientInput = input; updateSummary(); searchClients(input.value.trim()); });
+  });
+  formHost.addEventListener('input', updateSummary);
+  formHost.addEventListener('change', updateSummary);
+  if (!definition.fields.some((field) => /fa-calendar/.test(field.icon || ''))) {
+    canonical.date.value = localDateTimeValue();
   }
-  document.querySelectorAll('.kizeo-table').forEach((table) => addKizeoRow(table));
-  document.querySelectorAll('.add-kizeo-row').forEach((button) => button.addEventListener('click', () => addKizeoRow(button.closest('.kizeo-table'))));
 }
 
-function addKizeoRow(table) {
+function addTableRow(table, values = {}) {
   const container = table.querySelector('.kizeo-table-rows');
   const columns = JSON.parse(container.dataset.columns || '[]');
   const row = document.createElement('div');
   row.className = 'kizeo-table-row';
-  row.style.setProperty('--kizeo-columns', columns.length);
-  row.innerHTML = `${columns.map((column) => `<input data-column="${escapeAttr(column.id)}" aria-label="${escapeAttr(column.label)}" placeholder="${escapeAttr(column.label)}">`).join('')}<button class="icon-btn remove-kizeo-row" type="button" aria-label="Supprimer la ligne">×</button>`;
-  row.querySelector('.remove-kizeo-row').addEventListener('click', () => {
-    row.remove();
-    if (!container.children.length) addKizeoRow(table);
+  row.style.setProperty('--kizeo-columns', columns.length + 1);
+  row.innerHTML = `${columns.map((column) => `<input data-column="${escapeAttr(column.id)}" aria-label="${escapeAttr(column.label)}" placeholder="${escapeAttr(column.label)}" value="${escapeAttr(values[column.id] || '')}">`).join('')}<button class="icon-btn remove-kizeo-row" type="button" aria-label="Supprimer la ligne">×</button>`;
+  row.querySelector('.remove-kizeo-row').addEventListener('click', () => { row.remove(); if (!container.children.length) addTableRow(table); updateSummary(); });
+  row.addEventListener('input', () => {
+    const last = container.lastElementChild;
+    if (row === last && [...row.querySelectorAll('[data-column]')].some((input) => input.value.trim())) addTableRow(table);
+    updateSummary();
   });
   container.appendChild(row);
 }
 
-function updateDuration() {
-  const arrival = document.querySelector('#arrivalInput');
-  const departure = document.querySelector('#departureInput');
-  const duration = document.querySelector('#durationInput');
-  if (!arrival?.value || !departure?.value || !duration) return;
-  const [ah, am] = arrival.value.split(':').map(Number);
-  const [dh, dm] = departure.value.split(':').map(Number);
-  let minutes = (dh * 60 + dm) - (ah * 60 + am);
-  if (minutes < 0) minutes += 1440;
-  duration.value = `${String(Math.floor(minutes / 60)).padStart(2, '0')}h${String(minutes % 60).padStart(2, '0')}`;
-}
-
-companyCards.addEventListener('click', (event) => {
-  const card = event.target.closest('[data-company]');
-  if (card) selectCompany(card.dataset.company);
-});
-typeCards.addEventListener('click', (event) => {
-  const card = event.target.closest('[data-type]');
-  if (card) selectType(card.dataset.type);
-});
-variantSelect.addEventListener('change', updateVariant);
-
-function addItem(values = {}) {
-  rowCounter += 1;
-  const row = document.createElement('div');
-  row.className = 'item-row data-row';
-  row.dataset.row = rowCounter;
-  row.innerHTML = `
-    <input class="item-code" type="text" placeholder="Réf." aria-label="Code pièce" value="${escapeAttr(values.code || '')}">
-    <input class="item-designation" type="text" placeholder="Désignation de la pièce" aria-label="Désignation" value="${escapeAttr(values.designation || '')}">
-    <input class="item-price" type="number" min="0" step="0.01" aria-label="Prix HT" value="${Number(values.unit_price || 0)}">
-    <input class="item-qty" type="number" min="0.01" step="0.01" aria-label="Quantité" value="${Number(values.quantity || 1)}">
-    <input class="item-vat" type="number" min="0" step="0.1" aria-label="TVA" value="${Number(values.vat_rate ?? 20)}">
-    <span class="item-total">0,00 €</span>
-    <button class="icon-btn remove-item" type="button" aria-label="Supprimer la ligne">×</button>`;
-  rowsContainer.appendChild(row);
-  updateItems();
-}
-
-function itemValues() {
-  return [...rowsContainer.querySelectorAll('.data-row')].map((row) => {
-    const unitPrice = Number(row.querySelector('.item-price').value) || 0;
-    const quantity = Number(row.querySelector('.item-qty').value) || 0;
-    return {
-      code: row.querySelector('.item-code').value.trim(), designation: row.querySelector('.item-designation').value.trim(),
-      unit_price: unitPrice, quantity, vat_rate: Number(row.querySelector('.item-vat').value) || 0,
-      line_total: Math.round(unitPrice * quantity * 100) / 100,
-    };
-  }).filter((item) => item.code || item.designation);
-}
-
-function updateItems() {
-  let total = 0;
-  [...rowsContainer.querySelectorAll('.data-row')].forEach((row) => {
-    const value = (Number(row.querySelector('.item-price').value) || 0) * (Number(row.querySelector('.item-qty').value) || 0);
-    total += value;
-    row.querySelector('.item-total').textContent = money.format(value);
-  });
-  const items = itemValues();
-  itemsJson.value = JSON.stringify(items);
-  grandTotal.textContent = money.format(total);
-  document.querySelector('#summaryTotal').textContent = money.format(total);
-  document.querySelector('#summaryItems').textContent = items.length;
-}
-
-document.querySelector('#addItem').addEventListener('click', () => addItem());
-rowsContainer.addEventListener('input', (event) => {
-  updateItems();
-  if (!event.target.matches('.item-code, .item-designation')) return;
-  const lastRow = [...rowsContainer.querySelectorAll('.data-row')].at(-1);
-  if (lastRow && (lastRow.querySelector('.item-code').value.trim() || lastRow.querySelector('.item-designation').value.trim())) addItem();
-});
-rowsContainer.addEventListener('click', (event) => {
-  const button = event.target.closest('.remove-item');
-  if (!button) return;
-  button.closest('.data-row').remove();
-  if (!rowsContainer.querySelector('.data-row')) addItem(); else updateItems();
-});
-
-clientInput.addEventListener('input', () => {
-  dolibarrThirdpartyId.value = '';
-  document.querySelector('#summaryClient').textContent = clientInput.value.trim() || 'À renseigner';
-  clearTimeout(searchTimer);
-  if (!dolibarrConfigured || clientInput.value.trim().length < 2) return closeClientResults();
-  searchTimer = setTimeout(() => searchClients(clientInput.value.trim()), 300);
-});
-
-async function searchClients(query) {
-  try {
-    const response = await fetch(`/api/dolibarr/thirdparties?q=${encodeURIComponent(query)}`);
-    if (!response.ok) throw new Error('Recherche indisponible');
-    const { thirdparties } = await response.json();
-    clientResults.innerHTML = thirdparties.length ? thirdparties.map((client) => `<button class="search-result" type="button" data-client='${escapeAttr(JSON.stringify(client))}'><strong>${escapeHtml(client.name)}</strong><span>${escapeHtml([client.zip, client.town, client.email].filter(Boolean).join(' · '))}</span></button>`).join('') : '<div class="search-result"><strong>Aucun résultat</strong><span>Le client pourra être créé lors de la synchronisation.</span></div>';
-    clientResults.classList.add('open');
-  } catch { closeClientResults(); }
-}
-
-clientResults.addEventListener('click', (event) => {
-  const button = event.target.closest('[data-client]');
-  if (!button) return;
-  const client = JSON.parse(button.dataset.client);
-  clientInput.value = client.name || '';
-  dolibarrThirdpartyId.value = client.id || '';
-  document.querySelector('#phoneInput').value = client.phone || '';
-  document.querySelector('#emailInput').value = client.email || '';
-  document.querySelector('#addressInput').value = [client.address, [client.zip, client.town].filter(Boolean).join(' ')].filter(Boolean).join('\n');
-  document.querySelector('#summaryClient').textContent = client.name;
-  clientHint.textContent = `Client Dolibarr sélectionné · ID ${client.id}`;
-  closeClientResults();
-});
-document.addEventListener('click', (event) => { if (!event.target.closest('.client-search')) closeClientResults(); });
-function closeClientResults() { clientResults.classList.remove('open'); }
-
-function setupSignatures() {
-  setupSignatureCanvas('client');
-  setupSignatureCanvas('tech');
-  document.querySelectorAll('.clear-signature').forEach((button) => button.addEventListener('click', () => clearSignature(button.dataset.target)));
-}
-
-function setupSignatureCanvas(kind) {
-  const canvas = document.querySelector(kind === 'client' ? '#signatureClientCanvas' : '#signatureTechCanvas');
+function setupSignatureCanvas(canvas) {
+  const key = canvas.dataset.kizeo;
   const ratio = Math.max(window.devicePixelRatio || 1, 1);
   const width = canvas.getBoundingClientRect().width || 320;
-  canvas.width = Math.floor(width * ratio);
-  canvas.height = Math.floor(170 * ratio);
+  canvas.width = Math.floor(width * ratio); canvas.height = Math.floor(170 * ratio);
   const context = canvas.getContext('2d');
-  context.scale(ratio, ratio);
-  context.lineWidth = 2;
-  context.lineCap = 'round';
-  context.lineJoin = 'round';
-  context.strokeStyle = '#173b57';
+  context.scale(ratio, ratio); context.lineWidth = 2; context.lineCap = 'round'; context.lineJoin = 'round'; context.strokeStyle = '#111111';
   let drawing = false;
   const point = (event) => { const rect = canvas.getBoundingClientRect(); return { x: event.clientX - rect.left, y: event.clientY - rect.top }; };
-  canvas.addEventListener('pointerdown', (event) => { event.preventDefault(); drawing = true; signatureState[kind] = true; const p = point(event); context.beginPath(); context.moveTo(p.x, p.y); canvas.setPointerCapture(event.pointerId); });
+  canvas.addEventListener('pointerdown', (event) => { event.preventDefault(); drawing = true; signatureState[key] = true; const p = point(event); context.beginPath(); context.moveTo(p.x, p.y); canvas.setPointerCapture(event.pointerId); });
   canvas.addEventListener('pointermove', (event) => { if (!drawing) return; event.preventDefault(); const p = point(event); context.lineTo(p.x, p.y); context.stroke(); });
-  canvas.addEventListener('pointerup', () => { drawing = false; });
-  canvas.addEventListener('pointercancel', () => { drawing = false; });
+  canvas.addEventListener('pointerup', () => { drawing = false; }); canvas.addEventListener('pointercancel', () => { drawing = false; });
 }
 
-function clearSignature(kind) {
-  const canvas = document.querySelector(kind === 'client' ? '#signatureClientCanvas' : '#signatureTechCanvas');
+function clearSignature(key) {
+  const canvas = formHost.querySelector(`.signatureCanvas[data-kizeo="${cssEscape(key)}"]`);
+  if (!canvas) return;
   canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
-  signatureState[kind] = false;
+  signatureState[key] = false;
+}
+
+function searchClients(query) {
+  clearTimeout(searchTimer);
+  closeClientResults();
+  if (!dolibarrConfigured || query.length < 2) return;
+  searchTimer = setTimeout(async () => {
+    try {
+      const response = await fetch(`/api/dolibarr/thirdparties?q=${encodeURIComponent(query)}`);
+      if (!response.ok) return;
+      const { thirdparties } = await response.json();
+      if (!activeClientInput || !thirdparties.length) return;
+      const results = document.createElement('div');
+      results.className = 'search-results open dynamic-client-results';
+      results.innerHTML = thirdparties.map((client) => `<button class="search-result" type="button" data-client="${escapeAttr(JSON.stringify(client))}"><strong>${escapeHtml(client.name)}</strong><span>${escapeHtml([client.zip, client.town, client.email].filter(Boolean).join(' · '))}</span></button>`).join('');
+      activeClientInput.closest('.field')?.appendChild(results);
+      results.addEventListener('click', (event) => chooseClient(event));
+    } catch { /* Recherche facultative. */ }
+  }, 280);
+}
+
+function chooseClient(event) {
+  const button = event.target.closest('[data-client]');
+  if (!button || !activeClientInput) return;
+  const client = JSON.parse(button.dataset.client);
+  document.querySelector('#dolibarrThirdpartyId').value = client.id || '';
+  activeClientInput.value = client.name || '';
+  fillByLabel(/adresse/i, [client.address, [client.zip, client.town].filter(Boolean).join(' ')].filter(Boolean).join('\n'));
+  fillByLabel(/t[eé]l/i, client.phone || ''); fillByLabel(/mail|e-mail/i, client.email || '');
+  closeClientResults(); updateSummary();
+}
+
+function closeClientResults() { formHost.querySelectorAll('.dynamic-client-results').forEach((element) => element.remove()); }
+
+function fillByLabel(regex, value) {
+  const input = [...formHost.querySelectorAll('[data-kizeo]')].find((element) => regex.test(labelFor(element.dataset.kizeo)));
+  if (input && !input.value) input.value = value;
+}
+
+function labelFor(fieldId) {
+  return schemas.types[selectedType]?.fields?.find((field) => field.id === fieldId)?.label || fieldId;
+}
+
+function valuesByField() {
+  const fields = {};
+  formHost.querySelectorAll('[data-kizeo]').forEach((input) => {
+    if (input.matches('canvas')) return;
+    fields[input.dataset.kizeo] = input.type === 'checkbox' ? (input.checked ? '1' : '') : input.value.trim();
+  });
+  return fields;
+}
+
+function valueByIds(fields, ids, labelRegex) {
+  for (const id of ids) if (fields[id]) return fields[id];
+  const matched = Object.entries(fields).find(([id, value]) => value && labelRegex?.test(labelFor(id)));
+  return matched?.[1] || '';
+}
+
+function deriveCanonical(fields, definition) {
+  canonical.date.value = valueByIds(fields, ['date_et_heure1', 'date_et_heure', 'intervention_du', 'date'], /date.*heure|intervention du|appel du/i) || localDateTimeValue();
+  canonical.client.value = valueByIds(fields, ['client', 'client_s_', 'clients', 'client2', 'societe'], /^client|soci[eé]t[eé]|raison sociale/i);
+  canonical.reference.value = valueByIds(fields, ['ref_cde_client', 'reference_client', 'reference'], /r[eé]f.*client|commande/i);
+  canonical.phone.value = valueByIds(fields, ['tel_', 'tel', 'reference2', 'clients1'], /t[eé]l/i);
+  canonical.mail.value = valueByIds(fields, ['mail', 'reference4', 'adresse'], /mail|e-mail/i);
+  canonical.address.value = valueByIds(fields, ['adresse', 'reference3', 'n_de_tel'], /^adresse/i);
+  canonical.machine.value = valueByIds(fields, ['type_materiel_', 'machines1', 'machines', 'machine', 'materiel_s_'], /machine|mat[eé]riel|[eé]quipement/i);
+  canonical.serial.value = valueByIds(fields, ['n_de_matricule_', 'n_de_serie', 'champ_de_saisie2', 'n_'], /s[eé]rie|matricule|n°/i);
+  canonical.bonDe.value = valueByIds(fields, ['bon_de', 'types_d_intervention', 'type_d_intervention'], /^bon de|type.*intervention/i) || definition.shortLabel;
+  canonical.work.value = valueByIds(fields, ['travail_effectue_', 'travail_effectue', 'details_de_l_intervention', 'observations_technicien', 'motif_s_de_l_intervention'], /d[eé]tail|travail|observ|motif|rem[eè]de|rapport/i) || definition.label;
+  canonical.duration.value = valueByIds(fields, ['temps_passe', 'temps'], /temps pass[eé]|dur[eé]e/i);
+  canonical.technician.value = valueByIds(fields, ['non_du_technicien', 'nom_du_technicien1', 'technicien'], /technicien|formateur/i);
+  canonical.signatory.value = valueByIds(fields, ['nom_du_signataire_', 'nom_du_signataire'], /signataire|nom.*client/i);
+  canonical.arrival.value = valueByIds(fields, ['heures_d_arrivee'], /arriv[eé]e/i);
+  canonical.departure.value = valueByIds(fields, ['heure_depart'], /d[eé]part/i);
+  canonical.travel.value = valueByIds(fields, ['deplacement'], /d[eé]placement/i);
+  canonical.agreement.value = fields.bon_pour_accord || '';
+}
+
+function collectItems() {
+  const items = [];
+  formHost.querySelectorAll('.kizeo-table').forEach((table) => {
+    const tableLabel = table.querySelector('h3')?.textContent || '';
+    if (!/pi[eè]ce|fourniture|mat[eé]riel|prestation|article/i.test(tableLabel)) return;
+    table.querySelectorAll('.kizeo-table-row').forEach((row) => {
+      const values = Object.fromEntries([...row.querySelectorAll('[data-column]')].map((input) => [input.dataset.column, input.value.trim()]));
+      if (!Object.values(values).some(Boolean)) return;
+      const find = (regex) => Object.entries(values).find(([id]) => regex.test(labelFor(id) || id))?.[1] || '';
+      const unitPrice = Number(String(find(/prix|p\.u|co[uû]t/i)).replace(',', '.')) || 0;
+      const quantity = Number(String(find(/quantit[eé]|qt[eé]|qte/i)).replace(',', '.')) || 1;
+      items.push({ code: find(/code|r[eé]f/i), designation: find(/d[eé]signation|libell[eé]|article/i), unit_price: unitPrice, quantity, vat_rate: 20, line_total: Math.round(unitPrice * quantity * 100) / 100 });
+    });
+  });
+  return items.filter((item) => item.code || item.designation);
 }
 
 async function collectExtra() {
-  const fields = {};
-  document.querySelectorAll('[data-extra]').forEach((input) => {
-    fields[input.dataset.extra] = input.type === 'checkbox' ? (input.checked ? '1' : '') : input.value.trim();
-  });
-  document.querySelectorAll('.kizeo-table').forEach((table) => {
+  const fields = valuesByField();
+  formHost.querySelectorAll('.kizeo-table').forEach((table) => {
     const rows = [...table.querySelectorAll('.kizeo-table-row')].map((row) => Object.fromEntries([...row.querySelectorAll('[data-column]')].map((input) => [input.dataset.column, input.value.trim()])))
       .filter((row) => Object.values(row).some(Boolean));
     fields[table.dataset.kizeoTable] = JSON.stringify(rows);
   });
-  const checklist = [...document.querySelectorAll('.check-row')].map((row) => ({
-    group: row.dataset.group, groupLabel: row.dataset.groupLabel, code: row.dataset.code, label: row.dataset.label,
-    state: row.querySelector('.check-state').value, comment: row.querySelector('.check-comment').value.trim(),
-  }));
-  const days = [...document.querySelectorAll('.day-card')].map((card) => Object.fromEntries([...card.querySelectorAll('[data-day-field]')].map((input) => [input.dataset.dayField, input.value.trim()])));
-  const [photos, privatePhotos] = await Promise.all([
-    filesToImages(document.querySelector('#photosInput').files),
-    filesToImages(document.querySelector('#privatePhotosInput').files),
-  ]);
-  return {
-    fields, checklist, days, photos, privatePhotos,
-    signature_technicien: signatureState.tech ? document.querySelector('#signatureTechCanvas').toDataURL('image/png') : '',
-  };
+  const photoInputs = [...formHost.querySelectorAll('.photo-upload')];
+  const photos = (await Promise.all(photoInputs.map(async (input) => filesToImages(input.files, labelFor(input.dataset.kizeoPhoto))))).flat().slice(0, 6);
+  let clientSignature = '';
+  let technicianSignature = '';
+  formHost.querySelectorAll('.signatureCanvas').forEach((canvas) => {
+    const key = canvas.dataset.kizeo; if (!signatureState[key]) return;
+    const data = canvas.toDataURL('image/png');
+    fields[key] = 'Signature jointe';
+    if (/client|accord|signataire/i.test(labelFor(key))) clientSignature ||= data;
+    else technicianSignature ||= data;
+  });
+  if (!clientSignature) {
+    const last = [...formHost.querySelectorAll('.signatureCanvas')].reverse().find((canvas) => signatureState[canvas.dataset.kizeo]);
+    if (last) clientSignature = last.toDataURL('image/png');
+  }
+  return { fields, checklist: [], days: [], photos, privatePhotos: [], signature_client: clientSignature, signature_technicien: technicianSignature };
 }
 
-async function filesToImages(fileList) {
-  const files = [...fileList].slice(0, 6);
-  return Promise.all(files.map(async (file) => ({ name: file.name, data: await resizeImage(file) })));
+async function filesToImages(fileList, prefix) {
+  return Promise.all([...fileList].slice(0, 6).map(async (file) => ({ name: `${prefix} — ${file.name}`, data: await resizeImage(file) })));
 }
 
 function resizeImage(file) {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`Impossible de lire ${file.name}.`));
-    reader.onload = () => {
-      const image = new Image();
-      image.onerror = () => reject(new Error(`L’image ${file.name} est illisible.`));
-      image.onload = () => {
-        const scale = Math.min(1, 1600 / Math.max(image.width, image.height));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(image.width * scale));
-        canvas.height = Math.max(1, Math.round(image.height * scale));
-        canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/jpeg', .78));
-      };
-      image.src = reader.result;
-    };
-    reader.readAsDataURL(file);
+    const reader = new FileReader(); reader.onerror = () => reject(new Error(`Impossible de lire ${file.name}.`));
+    reader.onload = () => { const image = new Image(); image.onerror = () => reject(new Error(`L’image ${file.name} est illisible.`)); image.onload = () => {
+      const scale = Math.min(1, 1600 / Math.max(image.width, image.height)); const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.width * scale)); canvas.height = Math.max(1, Math.round(image.height * scale));
+      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height); resolve(canvas.toDataURL('image/jpeg', .78));
+    }; image.src = reader.result; }; reader.readAsDataURL(file);
   });
 }
 
-form.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  updateItems();
-  if (!form.reportValidity()) return;
-  const definition = schemas.types[selectedType];
-  const family = definition.family || definition.id;
-  const signatureRequired = family !== 'fiche_machine' && definition.fields?.some((sourceField) => /fa-gavel/.test(sourceField.icon || ''));
-  if (signatureRequired && !signatureState.client) {
-    document.querySelector('#signatureHint').textContent = 'La signature du client est obligatoire pour ce document.';
-    document.querySelector('#signatureHint').style.color = '#b43f44';
-    document.querySelector('#signatureClientCanvas').scrollIntoView({ behavior: 'smooth', block: 'center' });
-    return;
-  }
+function updateSummary() {
+  const fields = valuesByField();
+  const definition = schemas?.types?.[selectedType];
+  if (!definition) return;
+  deriveCanonical(fields, definition);
+  const items = collectItems(); const total = items.reduce((sum, item) => sum + item.line_total, 0);
+  itemsJson.value = JSON.stringify(items);
+  document.querySelector('#summaryClient').textContent = canonical.client.value || 'À renseigner';
+  document.querySelector('#summaryItems').textContent = String(items.length);
+  document.querySelector('#summaryTotal').textContent = money.format(total);
+}
 
-  const button = document.querySelector('#submitButton');
-  button.disabled = true;
-  button.textContent = 'Préparation du PDF…';
+companyCards.addEventListener('click', (event) => { const card = event.target.closest('[data-company]'); if (card) selectCompany(card.dataset.company); });
+typeCards.addEventListener('click', (event) => { const card = event.target.closest('[data-type]'); if (card) selectType(card.dataset.type); });
+document.addEventListener('click', (event) => { if (!event.target.closest('.field')) closeClientResults(); });
+
+form.addEventListener('submit', async (event) => {
+  event.preventDefault(); updateSummary();
+  const definition = schemas.types[selectedType];
+  const button = document.querySelector('#submitButton'); button.disabled = true; button.textContent = 'Préparation du PDF…';
   try {
-    const extra = await collectExtra();
+    const extra = await collectExtra(); deriveCanonical(extra.fields, definition);
     extraJson.value = JSON.stringify(extra);
-    document.querySelector('#signatureClientInput').value = signatureState.client ? document.querySelector('#signatureClientCanvas').toDataURL('image/png') : '';
+    document.querySelector('#signatureClientInput').value = extra.signature_client;
     document.querySelector('#signatureTechInput').value = extra.signature_technicien;
     const payload = Object.fromEntries(new FormData(form).entries());
-    if (!navigator.onLine) {
-      await saveOffline(payload, button);
-      return;
-    }
+    if (!navigator.onLine) { await saveOffline(payload, button); return; }
     let response;
-    try {
-      response = await fetch(form.action, { method: 'POST', headers: { Accept: 'application/json' }, body: new URLSearchParams(payload) });
-    } catch (error) {
-      if (!window.OfflineStore) throw error;
-      await saveOffline(payload, button);
-      return;
-    }
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.error || 'Impossible d’enregistrer le document.');
-    const download = document.createElement('a');
-    download.href = `/api/bons/${result.id}/pdf?download=1`;
-    download.download = `${result.publicRef}.pdf`;
-    download.hidden = true;
-    document.body.appendChild(download);
-    download.click();
-    download.remove();
+    try { response = await fetch(form.action, { method: 'POST', headers: { Accept: 'application/json' }, body: new URLSearchParams(payload) }); }
+    catch (error) { if (!window.OfflineStore) throw error; await saveOffline(payload, button); return; }
+    const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result.error || 'Impossible d’enregistrer le document.');
+    const download = document.createElement('a'); download.href = `/api/bons/${result.id}/pdf?download=1`; download.download = `${result.publicRef}.pdf`; download.hidden = true; document.body.appendChild(download); download.click(); download.remove();
     const warning = result.sync && result.sync.ok === false ? ' La synchronisation Dolibarr devra être relancée depuis l’historique.' : '';
-    showToast(`${result.publicRef} est enregistré. Le téléchargement démarre.${warning}`, Boolean(warning));
-    button.textContent = 'Document enregistré';
+    showToast(`${result.publicRef} est enregistré. Le PDF correspondant démarre.${warning}`, Boolean(warning)); button.textContent = 'Document enregistré';
     setTimeout(() => { window.location.href = `/historique.html?created=${result.id}`; }, 1800);
-  } catch (error) {
-    showToast(error.message || 'Impossible d’enregistrer le document.', true);
-    button.disabled = false;
-    button.textContent = 'Enregistrer et télécharger le PDF';
-  }
+  } catch (error) { showToast(error.message || 'Impossible d’enregistrer le document.', true); button.disabled = false; button.textContent = 'Enregistrer et télécharger le PDF'; }
 });
 
 async function saveOffline(payload, button) {
   if (!window.OfflineStore) throw new Error('Le stockage hors ligne n’est pas encore disponible. Rechargez la page une fois avec Internet.');
-  button.textContent = 'Enregistrement hors connexion…';
-  const entry = await window.OfflineStore.queueBon(payload, { endpoint: form.action });
-  await window.GCRSPWA?.requestBackgroundSync();
-  showToast(`${entry.localRef} est conservé sur cet appareil. Le PDF sera créé dès le retour d’Internet.`);
-  button.textContent = 'Bon enregistré hors connexion';
+  button.textContent = 'Enregistrement hors connexion…'; const entry = await window.OfflineStore.queueBon(payload, { endpoint: form.action }); await window.GCRSPWA?.requestBackgroundSync();
+  showToast(`${entry.localRef} est conservé sur cet appareil. Le PDF sera créé dès le retour d’Internet.`); button.textContent = 'Document enregistré hors connexion';
   window.setTimeout(() => { window.location.href = `/historique.html?queued=${encodeURIComponent(entry.localId)}`; }, 1600);
 }
 
 function configureDolibarr(config) {
-  dolibarrConfigured = Boolean(config.dolibarr?.configured);
-  const notice = document.querySelector('#doliNotice');
-  const badge = document.querySelector('#connectionBadge');
-  if (!navigator.onLine) {
-    notice.className = 'notice notice-warning';
-    notice.textContent = 'Hors connexion : le bon sera conservé sur cet appareil puis envoyé automatiquement.';
-    badge.className = 'badge badge-warning'; badge.textContent = 'Hors connexion';
-  } else if (dolibarrConfigured) {
-    notice.className = 'notice notice-success';
-    notice.textContent = 'Dolibarr configuré : fiche, commande éventuelle, facture brouillon et PDF GED.';
-    badge.className = 'badge badge-success'; badge.textContent = 'Dolibarr connecté';
-  } else {
-    notice.className = 'notice notice-warning'; notice.textContent = 'Mode local : configurez la clé API Render pour synchroniser.';
-    badge.className = 'badge badge-warning'; badge.textContent = 'Mode local';
-  }
+  dolibarrConfigured = Boolean(config.dolibarr?.configured); const notice = document.querySelector('#doliNotice'); const badge = document.querySelector('#connectionBadge');
+  if (!navigator.onLine) { notice.className = 'notice notice-warning'; notice.textContent = 'Hors connexion : le bon sera conservé sur cet appareil puis envoyé automatiquement.'; badge.className = 'badge badge-warning'; badge.textContent = 'Hors connexion'; }
+  else if (dolibarrConfigured) { notice.className = 'notice notice-success'; notice.textContent = 'Dolibarr configuré : fiche, commande éventuelle, facture brouillon et PDF GED.'; badge.className = 'badge badge-success'; badge.textContent = 'Dolibarr connecté'; }
+  else { notice.className = 'notice notice-warning'; notice.textContent = 'Mode local : configurez la clé API Render pour synchroniser.'; badge.className = 'badge badge-warning'; badge.textContent = 'Mode local'; }
 }
 
-function showToast(message, error = false) {
-  toast.textContent = message; toast.className = `toast show${error ? ' error' : ''}`;
-  setTimeout(() => { toast.className = 'toast'; }, 6000);
-}
-function typeIcon(type) { return ({ intervention: 'BI', visite_massicot: 'VT', mise_en_service: 'MES', fiche_machine: 'FM', livraison: 'BL', commande: 'BC', devis: 'DEV', contrat: 'CTR', note_frais: 'NDF', indemnity: 'IK', reprise_depot: 'REP', affutage: 'AFF' })[type] || 'DOC'; }
+function showToast(message, error = false) { toast.textContent = message; toast.className = `toast show${error ? ' error' : ''}`; setTimeout(() => { toast.className = 'toast'; }, 6000); }
+function typeIcon(type) { return ({ intervention: 'BI', visite_massicot: 'VT', mise_en_service: 'MES', fiche_machine: 'FM', livraison: 'BL', commande: 'BC', devis: 'DEV', contrat: 'CTR', note_frais: 'NDF', indemnite: 'IK', reprise_depot: 'REP', affutage: 'AFF' })[type] || 'DOC'; }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char])); }
 function escapeAttr(value) { return escapeHtml(value).replace(/`/g, '&#96;'); }
+function cssEscape(value) { return String(value).replace(/(["\\])/g, '\\$1'); }
 
 initialize();
