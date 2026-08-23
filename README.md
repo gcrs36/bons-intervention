@@ -4,7 +4,7 @@ Application web mobile installable de gestion des bons d’intervention, avec si
 
 ## Classement des formulaires
 
-La version 4.2 reprend l’inventaire actif de Kizeo : l’utilisateur choisit d’abord la société, puis seulement l’un de ses formulaires d’origine.
+La version 5 reprend l’inventaire actif de Kizeo : l’utilisateur choisit d’abord la société, puis seulement l’un de ses formulaires d’origine. Chaque bon affiche ses propres rubriques, champs, tableaux et signatures, puis produit le PDF correspondant.
 
 - **GCRS** : 15 formulaires terrain, atelier, commerce et frais ;
 - **Dimensions** : 1 formulaire ;
@@ -13,7 +13,7 @@ La version 4.2 reprend l’inventaire actif de Kizeo : l’utilisateur choisit d
 - **ARBOREAL** : 2 formulaires ;
 - **Clementz** : 1 formulaire.
 
-Les 24 formulaires actifs représentent 1 343 champs repris dans leur ordre Kizeo. Les séparateurs deviennent des sections, les tableaux commencent avec une ligne et peuvent grandir, et les champs longs adaptent leur hauteur dans le PDF. Les logos Kizeo d’origine de GCRS, Dimensions, ESI, ABEG et ARBOREAL sont utilisés dans l’application et les PDF ; le formulaire Clementz ne contenait pas d’image fixe Kizeo. Les 28 modèles Word personnalisés récupérés sont conservés dans `templates-kizeo/` comme sources de mise en page. Le modèle Dimensions conserve en plus son générateur PDF dédié.
+Les 24 formulaires actifs représentent 1 343 champs repris dans leur ordre Kizeo. Les séparateurs deviennent des sections, les tableaux commencent avec une ligne et peuvent grandir, et les champs longs adaptent leur hauteur dans le PDF. Les logos Kizeo d’origine de GCRS, Dimensions, ESI, ABEG et ARBOREAL sont utilisés dans l’application et les PDF ; le formulaire Clementz ne contenait pas d’image fixe Kizeo. Les 28 modèles Word personnalisés récupérés sont conservés dans `templates-kizeo/` comme sources de mise en page, et chaque PDF est composé à partir du schéma de son propre formulaire.
 
 ## Application installable et mode hors ligne
 
