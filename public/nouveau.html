@@ -11,10 +11,10 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/app-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icon-192.png">
-  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/app.css?v=5">
   <script src="/offline-store.js" defer></script>
   <script src="/pwa.js" defer></script>
-  <script src="/nouveau.js" defer></script>
+  <script src="/nouveau.js?v=5" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -45,6 +45,23 @@
           <input type="hidden" name="signature" id="signatureClientInput">
           <input type="hidden" name="signature_technicien" id="signatureTechInput">
           <input type="hidden" name="client_request_id" id="clientRequestId">
+          <input type="hidden" name="date_et_heure1" id="canonicalDate">
+          <input type="hidden" name="client" id="canonicalClient">
+          <input type="hidden" name="ref_cde_client" id="canonicalReference">
+          <input type="hidden" name="tel_" id="canonicalPhone">
+          <input type="hidden" name="mail" id="canonicalMail">
+          <input type="hidden" name="adresse" id="canonicalAddress">
+          <input type="hidden" name="type_materiel_" id="canonicalMachine">
+          <input type="hidden" name="n_de_matricule_" id="canonicalSerial">
+          <input type="hidden" name="bon_de" id="canonicalBonDe">
+          <input type="hidden" name="travail_effectue" id="canonicalWork">
+          <input type="hidden" name="temps_passe" id="canonicalDuration">
+          <input type="hidden" name="non_du_technicien" id="canonicalTechnician">
+          <input type="hidden" name="nom_du_signataire_" id="canonicalSignatory">
+          <input type="hidden" name="heures_d_arrivee" id="canonicalArrival">
+          <input type="hidden" name="heure_depart" id="canonicalDeparture">
+          <input type="hidden" name="deplacement" id="canonicalTravel">
+          <input type="hidden" name="bon_pour_accord" id="canonicalAgreement">
 
           <section class="form-card company-picker">
             <div class="form-card-head"><span class="form-card-number">1</span><div><h2>Société</h2><p class="section-help">Chaque bon reste rattaché à sa société et à son propre modèle PDF.</p></div></div>
@@ -57,71 +74,13 @@
             <div class="form-card-head"><span class="form-card-number">2</span><div><h2>Bons disponibles pour <span id="selectedCompanyLabel">la société</span></h2><p class="section-help">Seuls les formulaires appartenant à la société sélectionnée sont proposés.</p></div></div>
             <div class="form-card-body">
               <div class="type-cards" id="typeCards" aria-label="Types de document"></div>
-              <div class="form-grid variant-row">
-                <select id="variantSelect" hidden aria-hidden="true"></select>
-                <div class="field"><label for="dateHeureInput">Date et heure</label><input id="dateHeureInput" name="date_et_heure1" type="datetime-local" step="300" required></div>
-              </div>
+              <select id="variantSelect" hidden aria-hidden="true"></select>
             </div>
           </section>
 
           <div class="form-layout">
             <div>
-              <section class="form-card">
-                <div class="form-card-head"><span class="form-card-number">3</span><div><h2>Client</h2><p class="section-help">Recherchez un tiers Dolibarr ou saisissez un nouveau client.</p></div></div>
-                <div class="form-card-body form-grid">
-                  <div class="field span-2 client-search">
-                    <label for="clientInput">Client *</label>
-                    <input id="clientInput" name="client" type="text" autocomplete="organization" required placeholder="Nom du client">
-                    <div class="search-results" id="clientResults"></div><div class="hint" id="clientHint">La recherche Dolibarr s’active dès deux caractères.</div>
-                  </div>
-                  <div class="field"><label for="referenceInput">Référence client <span class="optional">(facultatif)</span></label><input id="referenceInput" name="ref_cde_client" type="text"></div>
-                  <div class="field"><label for="phoneInput">Téléphone</label><input id="phoneInput" name="tel_" type="tel"></div>
-                  <div class="field"><label for="emailInput">E-mail</label><input id="emailInput" name="mail" type="email"></div>
-                  <div class="field span-2"><label for="addressInput">Adresse</label><textarea id="addressInput" name="adresse" rows="2"></textarea></div>
-                </div>
-              </section>
-
-              <section class="form-card" id="equipmentCard">
-                <div class="form-card-head"><span class="form-card-number">4</span><div><h2>Équipement</h2><p class="section-help">Identification de la machine ou du matériel concerné.</p></div></div>
-                <div class="form-card-body form-grid">
-                  <div class="field"><label for="machineInput">Matériel / machine <span id="machineRequired">*</span></label><input id="machineInput" name="type_materiel_" type="text"></div>
-                  <div class="field"><label for="serialInput">N° série / matricule</label><input id="serialInput" name="n_de_matricule_" type="text"></div>
-                </div>
-              </section>
-
-              <div id="familyFields"></div>
-
-              <section class="form-card" id="itemsCard">
-                <div class="form-card-head"><span class="form-card-number">6</span><div><h2>Pièces et fournitures</h2><p class="section-help">Une ligne vide au départ ; la suivante apparaît dès qu’un code ou une désignation est saisi.</p></div></div>
-                <div class="form-card-body">
-                  <div class="items">
-                    <div class="item-row item-head"><span>Code</span><span>Désignation</span><span>Prix HT</span><span>Qté</span><span>TVA</span><span>Total HT</span><span></span></div>
-                    <div id="itemRows"></div>
-                  </div>
-                  <div class="items-footer"><button class="btn btn-secondary btn-small" id="addItem" type="button">＋ Ajouter une ligne</button><div class="grand-total">Total HT : <span id="grandTotal">0,00 €</span></div></div>
-                </div>
-              </section>
-
-              <section class="form-card">
-                <div class="form-card-head"><span class="form-card-number">7</span><div><h2>Photos</h2><p class="section-help">Les photos publiques apparaissent dans le PDF. Les confidentielles restent réservées au dossier interne.</p></div></div>
-                <div class="form-card-body form-grid">
-                  <div class="field"><label for="photosInput">Photos visibles par le client</label><input id="photosInput" type="file" accept="image/*" capture="environment" multiple><div class="hint">6 photos maximum, automatiquement redimensionnées.</div></div>
-                  <div class="field"><label for="privatePhotosInput">Photos confidentielles</label><input id="privatePhotosInput" type="file" accept="image/*" capture="environment" multiple><div class="hint">Conservées dans le bon, jamais ajoutées au PDF client.</div></div>
-                </div>
-              </section>
-
-              <section class="form-card">
-                <div class="form-card-head"><span class="form-card-number">8</span><div><h2>Validation et signatures</h2><p class="section-help">Les zones PDF mesurent au minimum 5 cm × 1,5 cm et s’adaptent à la signature.</p></div></div>
-                <div class="form-card-body">
-                  <div class="form-grid">
-                    <div class="field"><label for="technicianInput" id="technicianLabel">Technicien *</label><input id="technicianInput" name="non_du_technicien" type="text" required></div>
-                    <div class="field"><label for="signatoryInput">Nom du signataire <span id="signatoryRequired">*</span></label><input id="signatoryInput" name="nom_du_signataire_" type="text"></div>
-                    <div class="field"><label>Signature technicien / formateur</label><div class="signature-pad"><canvas id="signatureTechCanvas" aria-label="Signature du technicien"></canvas><div class="signature-actions"><button class="btn btn-ghost btn-small clear-signature" data-target="tech" type="button">Effacer</button></div></div></div>
-                    <div class="field"><label>Signature client</label><div class="signature-pad"><canvas id="signatureClientCanvas" aria-label="Signature du client"></canvas><div class="signature-actions"><button class="btn btn-ghost btn-small clear-signature" data-target="client" type="button">Effacer</button></div></div><div class="hint" id="signatureHint">Obligatoire sauf pour une fiche machine atelier.</div></div>
-                    <div class="span-2 checkbox" id="agreementRow"><input id="agreementInput" name="bon_pour_accord" value="1" type="checkbox"><label for="agreementInput">Le client confirme les informations du document et donne son bon pour accord.</label></div>
-                  </div>
-                </div>
-              </section>
+              <div id="familyFields" aria-live="polite"></div>
             </div>
 
             <aside class="sticky-card">
@@ -129,11 +88,11 @@
                 <div class="summary-head"><h2>Résumé</h2><p id="summaryType">Document à sélectionner</p></div>
                 <div class="summary-body">
                   <div class="notice notice-warning" id="doliNotice">Vérification de la connexion Dolibarr…</div>
-                  <div class="summary-list">
-                    <div class="summary-item"><span>Client</span><strong id="summaryClient">À renseigner</strong></div>
-                    <div class="summary-item"><span>Société</span><strong id="summaryVariant">—</strong></div>
-                    <div class="summary-item"><span>Pièces</span><strong id="summaryItems">0</strong></div>
-                    <div class="summary-item"><span>Total HT</span><strong id="summaryTotal">0,00 €</strong></div>
+                    <div class="summary-list">
+                      <div class="summary-item"><span>Client</span><strong id="summaryClient">À renseigner</strong></div>
+                      <div class="summary-item"><span>Société</span><strong id="summaryVariant">—</strong></div>
+                      <div class="summary-item"><span>Lignes</span><strong id="summaryItems">0</strong></div>
+                      <div class="summary-item"><span>Total HT</span><strong id="summaryTotal">0,00 €</strong></div>
                   </div>
                   <label class="checkbox sync-choice"><input id="syncInput" name="sync_dolibarr" value="1" type="checkbox"><span>Créer dans Dolibarr après l’enregistrement</span></label>
                   <button class="btn btn-primary" id="submitButton" type="submit">Enregistrer et télécharger le PDF</button>
