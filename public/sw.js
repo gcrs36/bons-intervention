@@ -3,15 +3,15 @@
 
 importScripts('/offline-store.js');
 
-const CACHE_NAME = 'gcrs-interventions-v4-2-0';
+const CACHE_NAME = 'gcrs-interventions-v5-0';
 const APP_SHELL = [
   '/',
   '/index.html',
   '/nouveau.html',
   '/historique.html',
-  '/app.css',
+  '/app.css?v=5',
   '/dashboard.js',
-  '/nouveau.js',
+  '/nouveau.js?v=5',
   '/history.js',
   '/offline-store.js',
   '/pwa.js',
