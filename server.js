@@ -253,11 +253,7 @@ app.post('/api/create-bon', async (req, res) => {
     const pdfFilename = `${publicRef}.pdf`;
     const pdfPath = path.join(pdfDir, pdfFilename);
     try {
-      if (payload.definition.family === 'intervention' && payload.bon_variant === 'dimensions') {
-        await generatePdf({ ...payload, id, public_ref: publicRef }, pdfPath);
-      } else {
-        await generateGenericPdf({ ...payload, id, public_ref: publicRef }, pdfPath);
-      }
+      await generateGenericPdf({ ...payload, id, public_ref: publicRef }, pdfPath);
     } catch (error) {
       await dbRun('DELETE FROM bon_items WHERE bon_id = ?', [id]);
       await dbRun('DELETE FROM bons WHERE id = ?', [id]);
@@ -666,7 +662,6 @@ async function generatePdf(bon, outputPath) {
 function normalizeBonPayload(body) {
   let parsedItems = [];
   try { parsedItems = Array.isArray(body.items) ? body.items : JSON.parse(body.items || '[]'); } catch { parsedItems = []; }
-  if (!Array.isArray(parsedItems)) parsedItems = [];
   if (!parsedItems.length && (body.code || body.champ_de_saisie2)) {
     parsedItems = [{ code: body.code, designation: body.champ_de_saisie2, unit_price: body.champ_de_saisie4, quantity: body.champ_de_saisie5, vat_rate: 20 }];
   }
@@ -753,17 +748,17 @@ function sanitizePhotos(value) {
 }
 
 function validateGenericPayload(payload) {
-  const required = [['date_et_heure1', 'La date'], ['client', 'Le client'], ['non_du_technicien', 'Le technicien']];
+  const hasField = (expression) => payload.definition.fields?.some((field) => expression.test(`${field.id} ${field.label}`));
+  const required = [['date_et_heure1', 'La date']];
+  if (hasField(/\bclient|soci[eé]t[eé]|raison sociale/i)) required.push(['client', 'Le client']);
   const family = payload.definition.family || payload.definition.id;
-  const needsSignature = family !== 'fiche_machine' && payload.definition.fields?.some((field) => /fa-gavel/.test(field.icon || ''));
+  if (hasField(/technicien|formateur/i)) required.push(['non_du_technicien', 'Le technicien ou le formateur']);
+  const needsSignature = payload.definition.fields?.some((field) => /fa-gavel/.test(field.icon || ''));
   if (needsSignature) required.push(['nom_du_signataire_', 'Le signataire']);
-  if (['intervention', 'visite_massicot', 'livraison'].includes(family)) required.push(['type_materiel_', 'Le matériel ou la machine']);
+  if (hasField(/machine|mat[eé]riel|[eé]quipement/i)) required.push(['type_materiel_', 'Le matériel ou la machine']);
   for (const [key, label] of required) if (!payload[key]) throw httpError(400, `${label} est obligatoire.`);
-  if (family === 'visite_massicot' && payload.extra.checklist.length && payload.extra.checklist.length !== 42) {
-    throw httpError(400, 'La checklist massicot doit contenir les 42 points de A1 à D38.');
-  }
   if (needsSignature && !payload.signature) throw httpError(400, 'La signature du client est obligatoire.');
-  if (family === 'intervention' && payload.definition.fields?.some((field) => field.id === 'bon_pour_accord') && !payload.bon_pour_accord) throw httpError(400, "L'accord du client est obligatoire.");
+  if (payload.definition.fields?.some((field) => field.id === 'bon_pour_accord') && !payload.bon_pour_accord) throw httpError(400, "L'accord du client est obligatoire.");
   if (payload.mail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.mail)) throw httpError(400, "L'adresse e-mail n'est pas valide.");
 }
 
